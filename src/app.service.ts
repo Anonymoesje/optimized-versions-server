@@ -7,7 +7,6 @@ import { ChildProcess, spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
 import { ConfigService } from '@nestjs/config';
-import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import { CACHE_DIR } from './constants';
 import { FileRemoval } from './cleanup/removalUtils';
@@ -34,15 +33,10 @@ export interface Job {
 
 @Injectable()
 export class AppService {
-  // Legacy job system (for backward compatibility during transition)
-  private activeJobs: Job[] = [];
-  private optimizationHistory: Job[] = [];
-  private ffmpegProcesses: Map<string, ChildProcess> = new Map();
-  private videoDurations: Map<string, number> = new Map();
-  private jobQueue: string[] = [];
-
-  // New cache-based system
+  // Cache-based system
   private processingJobs: Map<string, ProcessingJob> = new Map(); // itemId_qualityHash -> ProcessingJob
+  private ffmpegProcesses: Map<string, ChildProcess> = new Map(); // itemId_qualityHash -> FFmpeg process
+  private videoDurations: Map<string, number> = new Map(); // itemId_qualityHash -> duration
 
   private maxConcurrentJobs: number;
   private cacheDir: string;
@@ -420,19 +414,9 @@ export class AppService {
     return true;
   }
 
-  private async getCacheSize(): Promise<string> {
-    const cacheSize = await this.getDirectorySize(this.cacheDir);
-    return this.formatSize(cacheSize);
-  }
 
-  private async getDirectorySize(directory: string): Promise<number> {
-    const files = await fs.promises.readdir(directory);
-    const stats = await Promise.all(
-      files.map((file) => fs.promises.stat(path.join(directory, file))),
-    );
 
-    return stats.reduce((accumulator, { size }) => accumulator + size, 0);
-  }
+
 
   private formatSize(bytes: number): string {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -449,33 +433,7 @@ export class AppService {
 
 
 
-  private isDeviceIdInOptimizeHistory(job:Job){
-    const uniqueDeviceIds: string[] = [...new Set(this.optimizationHistory.map((job: Job) => job.deviceId))];
-    const result = uniqueDeviceIds.includes(job.deviceId); // Check if job.deviceId is in uniqueDeviceIds
-    this.logger.log(`Device ID ${job.deviceId} is ${result ? 'in' : 'not in'} the finished jobs. Optimizing ${result ? 'Allowed' : 'not Allowed'}`);
-    return result
-  }
 
-  private getActiveJobDeviceIds(): string[]{
-    const uniqueDeviceIds: string[] = [
-      ...new Set(
-        this.activeJobs
-          .filter((job: Job) => job.status === 'queued') // Filter jobs with status 'queued'
-          .map((job: Job) => job.deviceId) // Extract deviceId
-      )
-    ];
-    return uniqueDeviceIds
-  }
-  
-  private handleOptimizationHistory(job: Job): void{
-    // create a finished jobs list to make sure every device gets equal optimizing time
-    this.optimizationHistory.push(job) // push the newest job to the finished jobs list
-    const amountOfActiveDeviceIds = this.getActiveJobDeviceIds().length // get the amount of active queued job device ids
-    while(amountOfActiveDeviceIds <= this.optimizationHistory.length && this.optimizationHistory.length > 0){ // the finished jobs should always be lower than the amount of active jobs. This is to push out the last deviceid: FIFO
-      this.optimizationHistory.shift() // shift away the oldest job.
-    }
-    this.logger.log(`${this.optimizationHistory.length} deviceIDs have recently finished a job`)
-  }
 
 
 
@@ -498,135 +456,7 @@ export class AppService {
   }
 
   
-  private async startFFmpegProcess(
-    jobId: string,
-    ffmpegArgs: string[],
-  ): Promise<void> {
-    try {
-      await this.getVideoDuration(ffmpegArgs[1], jobId);
 
-      return new Promise((resolve, reject) => {
-        const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe']});
-        this.ffmpegProcesses.set(jobId, ffmpegProcess);
-
-        ffmpegProcess.stderr.on('data', (data) => {
-          this.updateProgress(jobId, data.toString());
-        });
-        
-        ffmpegProcess.on('close', async (code) => {
-          this.ffmpegProcesses.delete(jobId);
-          this.videoDurations.delete(jobId);
-
-          const job = this.activeJobs.find((job) => job.id === jobId);
-          if (!job) {
-            resolve();
-            return;
-          }
-
-          if (code === 0) {
-            
-            job.status = 'completed';
-            job.progress = 100;
-            // Update the file size
-            try {
-              const stats = await fsPromises.stat(job.outputPath);
-              job.size = stats.size;
-            } catch (error) {
-              this.logger.error(
-                `Error getting file size for job ${jobId}: ${error.message}`,
-              );
-            }
-            this.logger.log(
-              `Job ${jobId} completed successfully. Output: ${job.outputPath}, Size: ${this.formatSize(job.size || 0)}`,
-            );
-            resolve();
-          } else {
-            job.status = 'failed';
-            job.progress = 0;
-            this.logger.error(
-              `Job ${jobId} failed with exit code ${code}. Input URL: ${job.inputUrl}`,
-            );
-            // reject(new Error(`FFmpeg process failed with exit code ${code}`));
-          }
-        });
-
-        ffmpegProcess.on('error', (error) => {
-          this.logger.error(
-            `FFmpeg process error for job ${jobId}: ${error.message}`,
-          );
-          // reject(error);
-        });
-      });
-    } catch (error) {
-      this.logger.error(`Error processing job ${jobId}: ${error.message}`);
-      const job = this.activeJobs.find((job) => job.id === jobId);
-      if (job) {
-        job.status = 'failed';
-      }
-    }
-  }
-
-  
-  private async getVideoDuration(
-    inputUrl: string,
-    jobId: string,
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const ffprobe = spawn('ffprobe', [
-        '-v',
-        'error',
-        '-show_entries',
-        'format=duration',
-        '-of',
-        'default=noprint_wrappers=1:nokey=1',
-        inputUrl,
-      ]);
-
-      let output = '';
-
-      ffprobe.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-
-      ffprobe.on('close', (code) => {
-        if (code === 0) {
-          const duration = parseFloat(output.trim());
-          this.videoDurations.set(jobId, duration);
-          resolve();
-        } else {
-          reject(new Error(`ffprobe process exited with code ${code}`));
-        }
-      });
-    });
-  }
-
-  private updateProgress(jobId: string, ffmpegOutput: string): void {
-    const progressMatch = ffmpegOutput.match(
-      /time=(\d{2}):(\d{2}):(\d{2})\.\d{2}/,
-    );
-    const speedMatch = ffmpegOutput.match(/speed=(\d+\.?\d*)x/);
-
-    if (progressMatch) {
-      const [, hours, minutes, seconds] = progressMatch;
-      const currentTime =
-        parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
-
-      const totalDuration = this.videoDurations.get(jobId);
-      if (totalDuration) {
-        const progress = Math.min((currentTime / totalDuration) * 100, 99.9);
-        const job = this.activeJobs.find((job) => job.id === jobId);
-        if (job) {
-          job.progress = Math.max(progress, 0);
-
-          // Update speed if available
-          if (speedMatch) {
-            const speed = parseFloat(speedMatch[1]);
-            job.speed = Math.max(speed, 0);
-          }
-        }
-      }
-    }
-  }
 
   /**
    * Convert cache item to Job format for backward compatibility

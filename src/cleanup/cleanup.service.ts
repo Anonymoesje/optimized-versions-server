@@ -1,31 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { AppService } from '../app.service';
-import { promises as fsPromises } from 'fs';
-import * as path from 'path';
-import { CACHE_DIR } from '../constants';
-import { FileRemoval } from './removalUtils';
 import { ConfigService } from '@nestjs/config';
-import { Job } from '../app.service';
 import { CacheService } from '../cache/cache.service';
 import { JobMappingService } from '../cache/job-mapping.service';
 
 @Injectable()
 export class CleanupService {
   private readonly logger = new Logger(CleanupService.name);
-  private readonly cacheDir: string;
   private readonly retentionMs: number;
 
   constructor(
-    private readonly appService: AppService,
-    private readonly fileRemoval: FileRemoval,
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly jobMappingService: JobMappingService,
   ) {
-    this.cacheDir = CACHE_DIR;
 
-    // Use new 48-hour retention policy
+    // Use 48-hour retention policy
     const retentionHours = this.configService.get<number>(
       'CACHE_RETENTION_HOURS',
       48, // default to 48 hours

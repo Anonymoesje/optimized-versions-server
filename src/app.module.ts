@@ -19,11 +19,11 @@ import { JobMappingService } from './cache/job-mapping.service';
     AppService,
     Logger,
     JellyfinAuthService,
-    FileRemoval,
+    FileRemoval, // Still used by AppService for legacy cleanup
     CacheService,
     QualityService,
     JobMappingService,
-    CleanupService, // CleanupService after its dependencies
+    CleanupService,
   ],
 })
 export class AppModule implements NestModule {
