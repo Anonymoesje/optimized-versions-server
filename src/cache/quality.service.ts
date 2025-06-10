@@ -24,31 +24,39 @@ export class QualityService {
       this.logger.debug(`[DIAGNOSTIC] All URL parameters: ${JSON.stringify(allParams, null, 2)}`);
 
       const qualityInfo: QualityInfo = {
-        maxVideoBitrate: params.get('MaxVideoBitrate') || undefined,
-        videoCodec: params.get('VideoCodec') || undefined,
-        audioCodec: params.get('AudioCodec') || undefined,
-        maxWidth: params.get('MaxWidth') || undefined,
-        maxHeight: params.get('MaxHeight') || undefined,
-        container: params.get('Container') || undefined,
-        segmentContainer: params.get('SegmentContainer') || undefined,
-        audioChannels: params.get('AudioChannels') || undefined,
-        audioBitrate: params.get('AudioBitrate') || undefined,
-        videoLevel: params.get('VideoLevel') || undefined,
-        profile: params.get('Profile') || undefined,
-        maxFramerate: params.get('MaxFramerate') || undefined,
-        videoBitDepth: params.get('VideoBitDepth') || undefined,
-        audioSampleRate: params.get('AudioSampleRate') || undefined,
-        subtitleCodec: params.get('SubtitleCodec') || undefined,
+        // Video quality parameters (try both PascalCase and camelCase)
+        maxVideoBitrate: params.get('maxVideoBitrate') || params.get('MaxVideoBitrate') || undefined,
+        videoCodec: params.get('videoCodec') || params.get('VideoCodec') || undefined,
+        maxWidth: params.get('maxWidth') || params.get('MaxWidth') || undefined,
+        maxHeight: params.get('maxHeight') || params.get('MaxHeight') || undefined,
+        videoLevel: params.get('videoLevel') || params.get('VideoLevel') || undefined,
+        profile: params.get('profile') || params.get('Profile') || undefined,
+        maxFramerate: params.get('maxFramerate') || params.get('MaxFramerate') || undefined,
+        videoBitDepth: params.get('videoBitDepth') || params.get('VideoBitDepth') || undefined,
+
+        // Audio quality parameters
+        audioCodec: params.get('audioCodec') || params.get('AudioCodec') || undefined,
+        audioChannels: params.get('audioChannels') || params.get('AudioChannels') || undefined,
+        audioBitrate: params.get('audioBitrate') || params.get('AudioBitrate') || undefined,
+        audioSampleRate: params.get('audioSampleRate') || params.get('AudioSampleRate') || undefined,
+
+        // Container parameters (from URL we see 'container=ts')
+        container: params.get('container') || params.get('Container') || undefined,
+        segmentContainer: params.get('segmentContainer') || params.get('SegmentContainer') || undefined,
+
+        // Subtitle parameters
+        subtitleCodec: params.get('subtitleCodec') || params.get('SubtitleCodec') || undefined,
 
         // Audio/Subtitle stream selection parameters (CRITICAL for proper caching)
-        audioStreamIndex: params.get('AudioStreamIndex') || undefined,
-        subtitleStreamIndex: params.get('SubtitleStreamIndex') || undefined,
-        audioLanguage: params.get('AudioLanguage') || undefined,
-        subtitleLanguage: params.get('SubtitleLanguage') || undefined,
-        maxAudioChannels: params.get('MaxAudioChannels') || undefined,
-        transcodingMaxAudioChannels: params.get('TranscodingMaxAudioChannels') || undefined,
-        subtitleMethod: params.get('SubtitleMethod') || undefined,
-        startTimeTicks: params.get('StartTimeTicks') || undefined,
+        // NOTE: Jellyfin uses camelCase, not PascalCase!
+        audioStreamIndex: params.get('audioStreamIndex') || undefined,
+        subtitleStreamIndex: params.get('subtitleStreamIndex') || undefined,
+        audioLanguage: params.get('audioLanguage') || undefined,
+        subtitleLanguage: params.get('subtitleLanguage') || undefined,
+        maxAudioChannels: params.get('maxAudioChannels') || undefined,
+        transcodingMaxAudioChannels: params.get('transcodingMaxAudioChannels') || undefined,
+        subtitleMethod: params.get('subtitleMethod') || undefined,
+        startTimeTicks: params.get('startTimeTicks') || undefined,
 
         // Session-specific (will be excluded from hash)
         mediaSourceId: params.get('MediaSourceId') || undefined,
@@ -58,10 +66,11 @@ export class QualityService {
 
       // Log specific audio/subtitle parameters before cleanup
       this.logger.debug(`[DIAGNOSTIC] Audio/Subtitle params found:`);
-      this.logger.debug(`  - AudioStreamIndex: ${qualityInfo.audioStreamIndex || 'NOT FOUND'}`);
-      this.logger.debug(`  - SubtitleStreamIndex: ${qualityInfo.subtitleStreamIndex || 'NOT FOUND'}`);
-      this.logger.debug(`  - AudioLanguage: ${qualityInfo.audioLanguage || 'NOT FOUND'}`);
-      this.logger.debug(`  - SubtitleLanguage: ${qualityInfo.subtitleLanguage || 'NOT FOUND'}`);
+      this.logger.debug(`  - audioStreamIndex: ${qualityInfo.audioStreamIndex || 'NOT FOUND'}`);
+      this.logger.debug(`  - subtitleStreamIndex: ${qualityInfo.subtitleStreamIndex || 'NOT FOUND'}`);
+      this.logger.debug(`  - subtitleMethod: ${qualityInfo.subtitleMethod || 'NOT FOUND'}`);
+      this.logger.debug(`  - startTimeTicks: ${qualityInfo.startTimeTicks || 'NOT FOUND'}`);
+      this.logger.debug(`  - container: ${qualityInfo.container || 'NOT FOUND'}`);
 
       // Remove undefined values to keep hash consistent
       Object.keys(qualityInfo).forEach(key => {
