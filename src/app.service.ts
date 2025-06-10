@@ -131,6 +131,9 @@ export class AppService {
 
     // Check if we can start immediately or need to queue
     if (this.canStartNewJob()) {
+      // Mark as processing immediately to prevent race conditions
+      processingJob.status = 'processing';
+
       // Start the optimization process immediately
       this.startOptimizationJob(cacheItem, processingJob).catch(error => {
         this.logger.error(`Failed to start optimization job: ${error.message}`);
@@ -556,6 +559,9 @@ export class AppService {
       if (cacheItem && cacheItem.status === 'pending') {
         this.logger.log(`Starting queued job: ${processingJob.itemId}/${processingJob.qualityHash}`);
 
+        // Mark as processing immediately to prevent race conditions
+        processingJob.status = 'processing';
+
         this.startOptimizationJob(cacheItem, processingJob).catch(error => {
           this.logger.error(`Failed to start queued optimization job: ${error.message}`);
         });
@@ -568,7 +574,10 @@ export class AppService {
    */
   private async startOptimizationJob(cacheItem: CacheItem, processingJob: ProcessingJob): Promise<void> {
     try {
-      processingJob.status = 'processing';
+      // Only set status if not already processing (for race condition prevention)
+      if (processingJob.status !== 'processing') {
+        processingJob.status = 'processing';
+      }
       processingJob.startedAt = new Date();
 
       await this.cacheService.updateCacheItemStatus(
