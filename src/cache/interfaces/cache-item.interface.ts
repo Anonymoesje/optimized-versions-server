@@ -4,7 +4,7 @@ export interface CacheItem {
   itemId: string;
   qualityHash: string;
   qualityInfo: QualityInfo;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'pending' | 'processing' | 'completed' | 'failed';
   filePath: string;
   createdAt: Date;
   lastAccessed: Date;

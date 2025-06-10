@@ -56,7 +56,7 @@ CACHE_RETENTION_HOURS=48              # Default: 48 hours
 CLEANUP_INTERVAL_MINUTES=60           # Default: 60 minutes
 
 # Optional - Startup Behavior
-CANCEL_INTERRUPTED_JOBS=true          # Default: true - Cancel interrupted jobs on startup
+CANCEL_INTERRUPTED_JOBS=false         # Default: false - Auto-resume interrupted jobs (false) or mark as failed (true)
 ```
 
 ## How it works

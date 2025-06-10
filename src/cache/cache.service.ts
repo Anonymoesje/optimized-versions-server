@@ -16,7 +16,7 @@ export class CacheService {
 
   constructor(private readonly configService: ConfigService) {
     this.itemsDir = path.join(CACHE_DIR, 'items');
-    this.cancelInterruptedJobs = this.configService.get<boolean>('CANCEL_INTERRUPTED_JOBS', true);
+    this.cancelInterruptedJobs = this.configService.get<boolean>('CANCEL_INTERRUPTED_JOBS', false);
     this.ensureDirectoryStructure();
     this.loadExistingCacheItems();
     this.cleanupInterruptedJobs();
@@ -415,13 +415,9 @@ export class CacheService {
    * Cleanup interrupted jobs on startup
    */
   private async cleanupInterruptedJobs(): Promise<void> {
-    if (!this.cancelInterruptedJobs) {
-      this.logger.log('Skipping interrupted job cleanup (CANCEL_INTERRUPTED_JOBS=false)');
-      return;
-    }
-
     try {
-      let cleanedCount = 0;
+      let resumedCount = 0;
+      let failedCount = 0;
 
       for (const cacheItem of this.cacheItems.values()) {
         // Check if item was processing when server stopped
@@ -430,27 +426,46 @@ export class CacheService {
           const lockPath = this.getProcessingLockPath(cacheItem.itemId, cacheItem.qualityHash);
 
           if (fs.existsSync(lockPath)) {
-            // Mark as failed since process was interrupted
-            cacheItem.status = 'failed';
-            cacheItem.error = 'Server restart interrupted processing';
+            if (this.cancelInterruptedJobs) {
+              // Mark as failed since process was interrupted
+              cacheItem.status = 'failed';
+              cacheItem.error = 'Server restart interrupted processing';
 
-            // Remove processing lock
-            await this.removeProcessingLock(cacheItem.itemId, cacheItem.qualityHash);
+              // Remove processing lock
+              await this.removeProcessingLock(cacheItem.itemId, cacheItem.qualityHash);
+
+              failedCount++;
+              this.logger.warn(
+                `Marked interrupted job as failed: ${cacheItem.itemId}/${cacheItem.qualityHash}`
+              );
+            } else {
+              // Reset to pending for auto-resume
+              cacheItem.status = 'pending';
+              cacheItem.progress = 0;
+              cacheItem.error = undefined;
+
+              // Remove processing lock (will be recreated when job starts)
+              await this.removeProcessingLock(cacheItem.itemId, cacheItem.qualityHash);
+
+              resumedCount++;
+              this.logger.log(
+                `Reset interrupted job for auto-resume: ${cacheItem.itemId}/${cacheItem.qualityHash}`
+              );
+            }
 
             // Save updated status
             await this.saveCacheItemToDisk(cacheItem);
-
-            cleanedCount++;
-            this.logger.warn(
-              `Marked interrupted job as failed: ${cacheItem.itemId}/${cacheItem.qualityHash}`
-            );
           }
         }
       }
 
-      if (cleanedCount > 0) {
-        this.logger.log(`Cleaned up ${cleanedCount} interrupted jobs on startup`);
-      } else {
+      if (resumedCount > 0) {
+        this.logger.log(`Reset ${resumedCount} interrupted jobs for auto-resume on startup`);
+      }
+      if (failedCount > 0) {
+        this.logger.log(`Marked ${failedCount} interrupted jobs as failed on startup`);
+      }
+      if (resumedCount === 0 && failedCount === 0) {
         this.logger.log('No interrupted jobs found during startup');
       }
     } catch (error) {

@@ -502,6 +502,8 @@ export class AppService {
    */
   private mapCacheStatusToJobStatus(cacheStatus: CacheItem['status']): Job['status'] {
     switch (cacheStatus) {
+      case 'pending':
+        return 'queued';
       case 'processing':
         return 'optimizing';
       case 'completed':
@@ -773,9 +775,105 @@ export class AppService {
         }
       }
 
+      // Auto-resume pending jobs
+      await this.autoResumePendingJobs();
+
       this.logger.log('Startup cleanup completed');
     } catch (error) {
       this.logger.error(`Error during startup cleanup: ${error.message}`);
+    }
+  }
+
+  /**
+   * Auto-resume pending jobs after startup
+   */
+  private async autoResumePendingJobs(): Promise<void> {
+    try {
+      const allMappings = this.jobMappingService.getAllJobMappings();
+      const pendingJobs: { cacheItem: CacheItem; mappings: any[] }[] = [];
+
+      // Group mappings by cache item
+      const itemGroups = new Map<string, any[]>();
+
+      for (const mapping of allMappings) {
+        if (mapping.status === 'active') {
+          const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
+
+          if (cacheItem && cacheItem.status === 'pending') {
+            const key = `${mapping.itemId}_${mapping.qualityHash}`;
+
+            if (!itemGroups.has(key)) {
+              itemGroups.set(key, []);
+            }
+            itemGroups.get(key)!.push(mapping);
+          }
+        }
+      }
+
+      // Start optimization for each pending cache item
+      for (const mappings of itemGroups.values()) {
+        const firstMapping = mappings[0];
+        const cacheItem = this.cacheService.getCacheItem(firstMapping.itemId, firstMapping.qualityHash);
+
+        if (cacheItem && cacheItem.status === 'pending') {
+          pendingJobs.push({ cacheItem, mappings });
+        }
+      }
+
+      if (pendingJobs.length > 0) {
+        this.logger.log(`Auto-resuming ${pendingJobs.length} pending jobs from previous session`);
+
+        // Start jobs with concurrency limit
+        let startedCount = 0;
+        const maxConcurrent = this.maxConcurrentJobs;
+
+        for (const { cacheItem, mappings } of pendingJobs) {
+          if (startedCount >= maxConcurrent) {
+            this.logger.log(`Reached max concurrent jobs (${maxConcurrent}), remaining jobs will start when slots become available`);
+            break;
+          }
+
+          try {
+            // Check if already processing (race condition protection)
+            const processingKey = `${cacheItem.itemId}_${cacheItem.qualityHash}`;
+            if (!this.processingJobs.has(processingKey)) {
+              // Create processing job
+              const processingJob: ProcessingJob = {
+                jobId: mappings[0].jobId, // Use first job ID as primary
+                itemId: cacheItem.itemId,
+                qualityHash: cacheItem.qualityHash,
+                status: 'queued',
+                progress: 0,
+                deviceIds: mappings.map(m => m.deviceId),
+                speed: 0,
+                createdAt: new Date(),
+              };
+
+              this.processingJobs.set(processingKey, processingJob);
+
+              // Start optimization
+              this.startOptimizationJob(cacheItem, processingJob);
+              startedCount++;
+
+              this.logger.log(
+                `Auto-resumed job: ${cacheItem.itemId}/${cacheItem.qualityHash} (${mappings.length} waiting devices)`
+              );
+            }
+          } catch (error) {
+            this.logger.error(
+              `Error auto-resuming job ${cacheItem.itemId}/${cacheItem.qualityHash}: ${error.message}`
+            );
+          }
+        }
+
+        if (startedCount > 0) {
+          this.logger.log(`Successfully auto-resumed ${startedCount} jobs`);
+        }
+      } else {
+        this.logger.log('No pending jobs found to auto-resume');
+      }
+    } catch (error) {
+      this.logger.error(`Error during auto-resume: ${error.message}`);
     }
   }
 }
