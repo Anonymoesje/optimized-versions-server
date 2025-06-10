@@ -439,6 +439,9 @@ export class AppService {
       speed: job.speed ? `${job.speed.toFixed(1)}` : '0.0',
     }));
 
+    // Get cached items for browser
+    const cachedItems = await this.getCachedItemsForDashboard();
+
     // Calculate uptime
     const uptimeMs = process.uptime() * 1000;
     const uptime = this.formatUptime(uptimeMs);
@@ -474,7 +477,107 @@ export class AppService {
         itemsCleanedToday: 0, // TODO: Track daily cleanup count
       },
       jobs: currentJobs,
+      cachedItems: cachedItems,
     };
+  }
+
+  private async getCachedItemsForDashboard() {
+    const allCacheItems = this.cacheService.getAllCacheItems();
+
+    // Convert cache items to dashboard format
+    const items = allCacheItems.map(cacheItem => {
+      const title = this.getCacheItemTitle(cacheItem);
+      const type = this.getCacheItemType(cacheItem);
+      const quality = this.getCacheItemQuality(cacheItem);
+
+      return {
+        id: cacheItem.itemId,
+        title,
+        type,
+        quality,
+        status: cacheItem.status,
+        statusText: this.getStatusText(cacheItem.status),
+        progress: Math.round(cacheItem.progress || 0),
+        size: cacheItem.size ? this.formatSize(cacheItem.size) : '0 B',
+        createdAt: cacheItem.createdAt,
+        lastAccessed: cacheItem.lastAccessed,
+        timeAgo: this.formatTimeAgo(cacheItem.lastAccessed),
+        error: cacheItem.error,
+      };
+    });
+
+    // Sort by last accessed (most recent first)
+    items.sort((a, b) => b.lastAccessed.getTime() - a.lastAccessed.getTime());
+
+    // Limit to top 20 items for dashboard
+    return items.slice(0, 20);
+  }
+
+  private getCacheItemTitle(cacheItem: any): string {
+    const metadata = cacheItem.metadata;
+
+    if (!metadata) {
+      return `Item ${cacheItem.itemId.substring(0, 8)}...`;
+    }
+
+    // TV Show Episode
+    if (metadata.Type === 'Episode' && metadata.SeriesName) {
+      const season = metadata.ParentIndexNumber || 1;
+      const episode = metadata.IndexNumber || 1;
+      const episodeName = metadata.Name || '';
+      return `${metadata.SeriesName} S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}${episodeName ? ` - ${episodeName}` : ''}`;
+    }
+
+    // Movie
+    if (metadata.Type === 'Movie' && metadata.Name) {
+      const year = metadata.ProductionYear ? ` (${metadata.ProductionYear})` : '';
+      return `${metadata.Name}${year}`;
+    }
+
+    // Fallback to Name or itemId
+    return metadata.Name || `Item ${cacheItem.itemId.substring(0, 8)}...`;
+  }
+
+  private getCacheItemType(cacheItem: any): string {
+    const metadata = cacheItem.metadata;
+
+    if (!metadata?.Type) {
+      return 'Unknown';
+    }
+
+    const typeMap = {
+      'Episode': 'TV Show',
+      'Movie': 'Movie',
+      'Series': 'TV Show',
+      'Season': 'TV Season',
+    };
+
+    return typeMap[metadata.Type] || metadata.Type;
+  }
+
+  private getCacheItemQuality(cacheItem: any): string {
+    const qualityInfo = cacheItem.qualityInfo;
+
+    if (!qualityInfo) {
+      return 'Unknown Quality';
+    }
+
+    // Build quality string from available info
+    const parts = [];
+
+    if (qualityInfo.resolution) {
+      parts.push(qualityInfo.resolution);
+    }
+
+    if (qualityInfo.videoCodec) {
+      parts.push(qualityInfo.videoCodec.toUpperCase());
+    }
+
+    if (qualityInfo.audioCodec) {
+      parts.push(qualityInfo.audioCodec.toUpperCase());
+    }
+
+    return parts.length > 0 ? parts.join(' • ') : 'Unknown Quality';
   }
 
   private getJobTitle(job: Job): string {

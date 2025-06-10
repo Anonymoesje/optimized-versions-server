@@ -474,6 +474,13 @@ export class CacheService {
   }
 
   /**
+   * Get all cache items
+   */
+  getAllCacheItems(): CacheItem[] {
+    return Array.from(this.cacheItems.values());
+  }
+
+  /**
    * Get cache statistics
    */
   getCacheStats(): CacheStats {

@@ -126,7 +126,7 @@ export class AppController {
             grid-column: 1 / -1;
         }
 
-        .job-item {
+        .job-item, .cache-item {
             background: #f8f9fa;
             border-radius: 8px;
             padding: 16px;
@@ -134,16 +134,48 @@ export class AppController {
             border-left: 4px solid #667eea;
         }
 
-        .job-header {
+        .job-header, .cache-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 8px;
         }
 
-        .job-title {
+        .job-title, .cache-title {
             font-weight: 600;
             color: #333;
+        }
+
+        .cache-title-section {
+            flex: 1;
+        }
+
+        .cache-meta {
+            display: flex;
+            gap: 12px;
+            margin-top: 4px;
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .cache-type, .cache-quality, .cache-time {
+            background: #e9ecef;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+        }
+
+        .cache-status-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+
+        .cache-size {
+            font-size: 0.85rem;
+            color: #666;
+            font-weight: 500;
         }
 
         .job-status {
@@ -194,9 +226,18 @@ export class AppController {
                 grid-template-columns: 1fr;
             }
 
-            .job-header {
+            .job-header, .cache-header {
                 flex-direction: column;
                 align-items: flex-start;
+                gap: 8px;
+            }
+
+            .cache-status-section {
+                align-items: flex-start;
+            }
+
+            .cache-meta {
+                flex-wrap: wrap;
                 gap: 8px;
             }
         }
@@ -335,6 +376,44 @@ export class AppController {
                                     </div>
                                     <div style="margin-top: 8px; font-size: 0.9rem; color: #666;">
                                         \${job.progress}% • \${job.speed}x speed
+                                    </div>
+                                \` : ''}
+                            </div>
+                        \`).join('')
+                    }
+                </div>
+
+                <div class="card jobs-card">
+                    <h3>🎬 Cached Shows & Movies</h3>
+                    \${data.cachedItems.length === 0 ?
+                        '<p style="text-align: center; color: #666; padding: 20px;">No cached items</p>' :
+                        data.cachedItems.map(item => \`
+                            <div class="cache-item">
+                                <div class="cache-header">
+                                    <div class="cache-title-section">
+                                        <span class="cache-title">\${item.title}</span>
+                                        <div class="cache-meta">
+                                            <span class="cache-type">\${item.type}</span>
+                                            <span class="cache-quality">\${item.quality}</span>
+                                            <span class="cache-time">\${item.timeAgo}</span>
+                                        </div>
+                                    </div>
+                                    <div class="cache-status-section">
+                                        <span class="job-status status-\${item.status}">\${item.statusText}</span>
+                                        \${item.status === 'completed' ? \`<span class="cache-size">\${item.size}</span>\` : ''}
+                                    </div>
+                                </div>
+                                \${item.status === 'processing' ? \`
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" style="width: \${item.progress}%"></div>
+                                    </div>
+                                    <div style="margin-top: 8px; font-size: 0.9rem; color: #666;">
+                                        \${item.progress}% complete
+                                    </div>
+                                \` : ''}
+                                \${item.status === 'failed' && item.error ? \`
+                                    <div style="margin-top: 8px; font-size: 0.9rem; color: #dc3545;">
+                                        Error: \${item.error}
                                     </div>
                                 \` : ''}
                             </div>
