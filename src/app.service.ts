@@ -45,9 +45,7 @@ export class AppService {
   private processingJobs: Map<string, ProcessingJob> = new Map(); // itemId_qualityHash -> ProcessingJob
 
   private maxConcurrentJobs: number;
-  private maxCachedPerUser: number;
   private cacheDir: string;
-  private immediateRemoval: boolean;
 
   constructor(
     private logger: Logger,
@@ -61,14 +59,6 @@ export class AppService {
     this.maxConcurrentJobs = this.configService.get<number>(
       'MAX_CONCURRENT_JOBS',
       1,
-    );
-    this.maxCachedPerUser = this.configService.get<number>(
-      'MAX_CACHED_PER_USER',
-      10,
-    );
-    this.immediateRemoval = this.configService.get<boolean>(
-      'REMOVE_FILE_AFTER_RIGHT_DOWNLOAD',
-      true,
     );
   }
 
@@ -489,66 +479,9 @@ export class AppService {
 
 
 
-  private checkQueue() {
-    let runningJobs = this.activeJobs.filter((job) => job.status === 'optimizing').length;
-  
-    this.logger.log(
-      `${runningJobs} active jobs running and ${this.jobQueue.length} items in the queue`,
-    );
-  
-    for (const index in this.jobQueue) {
-      if (runningJobs >= this.maxConcurrentJobs) {
-        break; // Stop if max concurrent jobs are reached
-      }
-      const nextJobId = this.jobQueue[index]; // Access job ID by index
-      let nextJob: Job = this.activeJobs.find((job) => job.id === nextJobId);
-      
-      if (!this.userTooManyCachedItems(nextJobId) ) {
-        nextJob.status = 'pending downloads limit'
-        // Skip this job if user cache limits are reached
-        continue;
-      }
-      if(this.isDeviceIdInOptimizeHistory(nextJob)){
-        // Skip this job if deviceID is in the recently finished jobs
-        continue
-      }
-      // Start the job and remove it from the queue
-      this.startJob(nextJobId);
-      this.jobQueue.splice(Number(index), 1); // Remove the started job from the queue
-      runningJobs++; // Increment running jobs
-    }
-  }
 
-  private userTooManyCachedItems(jobid): boolean{
-    if(this.maxCachedPerUser == 0){
-      return false
-    }
-    const theNewJob: Job = this.activeJobs.find((job) => job.id === jobid)
-    let completedUserJobs = this.activeJobs.filter((job) => (job.status === "completed" || job.status === 'optimizing') && job.deviceId === theNewJob.deviceId)
-    if((completedUserJobs.length >= this.maxCachedPerUser)){
-      this.logger.log(`Waiting for items to be downloaded - device ${theNewJob.deviceId} has ${completedUserJobs.length} downloads waiting `);
-      return false
-    }
-    else{
-      this.logger.log(`Optimizing - device ${theNewJob.deviceId} has ${completedUserJobs.length} downloads waiting`);
-      return true
-    }  
-  }
 
-  private startJob(jobId: string) {
-    const job = this.activeJobs.find((job) => job.id === jobId);
-    if (job) {
-      job.status = 'optimizing';
-      this.handleOptimizationHistory(job)
-      const ffmpegArgs = this.getFfmpegArgs(job.inputUrl, job.outputPath);
-      this.startFFmpegProcess(jobId, ffmpegArgs)
-        .finally(() => {
-          // This runs after the returned Promise resolves or rejects.
-          this.checkQueue();
-        });
-      this.logger.log(`Started job ${jobId}`);
-    }
-  }
+
 
   private getFfmpegArgs(inputUrl: string, outputPath: string): string[] {
     return [

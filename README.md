@@ -54,11 +54,6 @@ MAX_CONCURRENT_JOBS=1                 # Default: 1
 # Optional - Cache Management
 CACHE_RETENTION_HOURS=48              # Default: 48 hours
 CLEANUP_INTERVAL_MINUTES=60           # Default: 60 minutes
-
-# Optional - Legacy Settings (for migration)
-TIME_TO_KEEP_FILES=8                  # Legacy: hours to keep files
-REMOVE_FILE_AFTER_RIGHT_DOWNLOAD=true # Legacy: immediate removal
-MAX_CACHED_PER_USER=10                # Legacy: per-user limits
 ```
 
 ## How it works
