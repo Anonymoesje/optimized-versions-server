@@ -144,6 +144,7 @@ export class AppService {
       });
     } else {
       // Job will remain in 'pending' status until a slot becomes available
+      // Keep processing job status as 'queued' and cache item status as 'pending'
       this.logger.log(`Job queued due to max concurrent limit: ${itemId}/${qualityHash}`);
 
       this.logger.debug(`[DEBUG] Job queued: ${itemId}/${qualityHash}`);
@@ -185,7 +186,13 @@ export class AppService {
     this.logger.debug(`  - Job Mapping Status: ${mapping.status}`);
 
     // Convert cache item to Job format for backward compatibility
-    const job = this.convertCacheItemToJob(cacheItem, jobId, mapping.deviceId);
+    let job = this.convertCacheItemToJob(cacheItem, jobId, mapping.deviceId);
+
+    // Override job status with processing job status if it's queued
+    if (processingJob && processingJob.status === 'queued') {
+      job.status = 'queued';
+      this.logger.debug(`  - Overriding job status to 'queued' from processing job`);
+    }
 
     this.logger.debug(`  - Final Job Status: ${job.status}`);
 
@@ -611,6 +618,8 @@ export class AppService {
       }
       processingJob.startedAt = new Date();
 
+      // Only update cache item status to 'processing' if we're actually starting the job
+      // For queued jobs, we should NOT call this method until they're ready to start
       await this.cacheService.updateCacheItemStatus(
         cacheItem.itemId,
         cacheItem.qualityHash,
