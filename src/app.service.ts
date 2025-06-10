@@ -142,8 +142,10 @@ export class AppService {
     const processingKey = `${itemId}_${qualityHash}`;
     this.processingJobs.set(processingKey, processingJob);
 
-    // Start the optimization process
-    this.startOptimizationJob(cacheItem, processingJob);
+    // Start the optimization process (don't await to return jobId immediately)
+    this.startOptimizationJob(cacheItem, processingJob).catch(error => {
+      this.logger.error(`Failed to start optimization job: ${error.message}`);
+    });
 
     this.logger.log(
       `Started new optimization for ${itemId}/${qualityHash} -> job ${jobId}`
@@ -174,10 +176,22 @@ export class AppService {
   }
 
   getAllJobs(deviceId?: string | null): Job[] {
-    if (!deviceId) {
-      return this.activeJobs;
+    const jobs: Job[] = [];
+
+    // Get all job mappings for the device (or all if no deviceId specified)
+    const mappings = deviceId
+      ? this.jobMappingService.getJobMappingsForDevice(deviceId)
+      : this.jobMappingService.getAllJobMappings();
+
+    for (const mapping of mappings) {
+      const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
+      if (cacheItem && cacheItem.status !== 'failed') {
+        const job = this.convertCacheItemToJob(cacheItem, mapping.jobId, mapping.deviceId);
+        jobs.push(job);
+      }
     }
-    return this.activeJobs.filter((job) => job.deviceId === deviceId && job.status !== 'ready-for-removal');
+
+    return jobs;
   }
 
   async deleteCache(): Promise<{ message: string }> {
@@ -687,7 +701,9 @@ export class AppService {
         this.ffmpegProcesses.set(processKey, ffmpegProcess);
 
         ffmpegProcess.stderr.on('data', (data) => {
-          this.updateProgressForCache(cacheItem, processingJob, data.toString());
+          this.updateProgressForCache(cacheItem, processingJob, data.toString()).catch(error => {
+            this.logger.error(`Error updating progress: ${error.message}`);
+          });
         });
 
         ffmpegProcess.on('close', async (code) => {
@@ -838,7 +854,7 @@ export class AppService {
           processingJob.speed = Math.max(speed, 0);
         }
 
-        // Update cache item progress
+        // Update cache item progress - this will be reflected in all job status calls
         await this.cacheService.updateCacheItemStatus(
           cacheItem.itemId,
           cacheItem.qualityHash,
@@ -848,6 +864,13 @@ export class AppService {
             speed: processingJob.speed
           }
         );
+
+        // Log progress occasionally for debugging
+        if (Math.floor(processingJob.progress) % 10 === 0) {
+          this.logger.debug(
+            `Progress update: ${cacheItem.itemId}/${cacheItem.qualityHash} - ${processingJob.progress.toFixed(1)}% (${processingJob.speed}x)`
+          );
+        }
       }
     }
   }

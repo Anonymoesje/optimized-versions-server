@@ -126,6 +126,13 @@ export class JobMappingService {
   }
 
   /**
+   * Get all job mappings
+   */
+  getAllJobMappings(): JobMapping[] {
+    return Array.from(this.jobMappings.values());
+  }
+
+  /**
    * Get statistics about job mappings
    */
   getStats(): { total: number; byDevice: Record<string, number>; oldestMapping: Date | null } {
