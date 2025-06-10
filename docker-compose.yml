@@ -1,14 +1,18 @@
 services:
   app:
-    image: fredrikburmester/streamyfin-optimized-versions-server:master
+    image: ghcr.io/martijnvanonz/optimized-versions-server:latest
     ports:
       - '3000:3000'
     env_file:
       - .env
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
+      # New cache configuration
+      - CACHE_RETENTION_HOURS=48
+      - CLEANUP_INTERVAL_MINUTES=60
     restart: unless-stopped
-
-    # If you want to use a local volume for the cache, uncomment the following lines:
     volumes:
+      # Cache volume for persistent storage
       - ./cache:/usr/src/app/cache
+      # Optional: logs volume
+      - ./logs:/usr/src/app/logs
