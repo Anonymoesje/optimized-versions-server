@@ -196,7 +196,7 @@ export class AppService {
       if (cacheItem) {
         const job = this.convertCacheItemToJob(cacheItem, mapping.jobId, mapping.deviceId);
 
-        // Only include jobs that are not downloaded or cancelled (for backward compatibility)
+        // Include active jobs (exclude downloaded and cancelled jobs like original)
         if (mapping.status === 'active') {
           jobs.push(job);
         }
@@ -373,13 +373,10 @@ export class AppService {
     const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
 
     if (cacheItem?.status === 'completed') {
-      // Mark job as downloaded
-      await this.jobMappingService.updateJobStatus(jobId, 'downloaded');
-
-      // Update last accessed time when file is downloaded
+      // Update last accessed time when file is downloaded (but don't change job status)
       await this.cacheService.updateLastAccessed(mapping.itemId, mapping.qualityHash);
 
-      this.logger.log(`Job ${jobId} marked as downloaded for ${mapping.itemId}/${mapping.qualityHash}`);
+      this.logger.log(`Download started for ${cacheItem.filePath}`);
       return cacheItem.filePath;
     }
 
