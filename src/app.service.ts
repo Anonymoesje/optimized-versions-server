@@ -171,15 +171,14 @@ export class AppService {
       : this.jobMappingService.getAllJobMappings();
 
     for (const mapping of mappings) {
-      // Only show active jobs (not downloaded or cancelled)
-      if (mapping.status !== 'active') {
-        continue;
-      }
-
       const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
-      if (cacheItem && cacheItem.status !== 'failed') {
+      if (cacheItem) {
         const job = this.convertCacheItemToJob(cacheItem, mapping.jobId, mapping.deviceId);
-        jobs.push(job);
+
+        // Only include jobs that are not downloaded or cancelled (for backward compatibility)
+        if (mapping.status === 'active') {
+          jobs.push(job);
+        }
       }
     }
 
@@ -491,7 +490,7 @@ export class AppService {
       deviceId: deviceId,
       itemId: cacheItem.itemId,
       timestamp: cacheItem.createdAt,
-      size: cacheItem.size,
+      size: cacheItem.size || 0, // Default to 0 if size not available yet
       item: cacheItem.metadata,
       speed: cacheItem.speed,
     };

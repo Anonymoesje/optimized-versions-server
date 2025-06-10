@@ -9,7 +9,7 @@ export interface CacheItem {
   createdAt: Date;
   lastAccessed: Date;
   completedAt?: Date;
-  size: number;
+  size?: number;
   originalUrl: string;
   waitingDevices: string[]; // DeviceIds waiting for this item
   metadata?: any; // Original item metadata from Jellyfin
