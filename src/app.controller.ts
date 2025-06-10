@@ -112,7 +112,7 @@ export class AppController {
     @Param('id') id: string,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const filePath = this.appService.getTranscodedFilePath(id);
+    const filePath = await this.appService.getTranscodedFilePath(id);
 
     if (!filePath) {
       throw new NotFoundException('File not found or job not completed');

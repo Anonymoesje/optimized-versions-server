@@ -184,6 +184,11 @@ export class AppService {
       : this.jobMappingService.getAllJobMappings();
 
     for (const mapping of mappings) {
+      // Only show active jobs (not downloaded or cancelled)
+      if (mapping.status !== 'active') {
+        continue;
+      }
+
       const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
       if (cacheItem && cacheItem.status !== 'failed') {
         const job = this.convertCacheItemToJob(cacheItem, mapping.jobId, mapping.deviceId);
@@ -196,12 +201,54 @@ export class AppService {
 
   async deleteCache(): Promise<{ message: string }> {
     try {
-      const files = await fsPromises.readdir(this.cacheDir);
-      await Promise.all(
-        files.map((file) => fsPromises.unlink(path.join(this.cacheDir, file))),
-      );
+      let deletedItems = 0;
+      let deletedMappings = 0;
+
+      // Get all cache items and remove them properly
+      const allMappings = this.jobMappingService.getAllJobMappings();
+      const processedItems = new Set<string>();
+
+      for (const mapping of allMappings) {
+        const itemKey = `${mapping.itemId}_${mapping.qualityHash}`;
+
+        if (!processedItems.has(itemKey)) {
+          const success = await this.cacheService.removeItem(mapping.itemId, mapping.qualityHash);
+          if (success) {
+            deletedItems++;
+          }
+          processedItems.add(itemKey);
+        }
+
+        // Remove job mapping
+        await this.jobMappingService.removeJobMapping(mapping.jobId);
+        deletedMappings++;
+      }
+
+      // Clear in-memory collections
+      this.processingJobs.clear();
+      this.ffmpegProcesses.clear();
+      this.videoDurations.clear();
+
+      // Also clean up any remaining legacy files
+      try {
+        const files = await fsPromises.readdir(this.cacheDir);
+        const legacyFiles = files.filter(file => file.startsWith('combined_') && file.endsWith('.mp4'));
+
+        await Promise.all(
+          legacyFiles.map((file) => fsPromises.unlink(path.join(this.cacheDir, file)))
+        );
+
+        if (legacyFiles.length > 0) {
+          this.logger.log(`Cleaned up ${legacyFiles.length} legacy cache files`);
+        }
+      } catch (error) {
+        this.logger.warn(`Error cleaning legacy files: ${error.message}`);
+      }
+
+      this.logger.log(`Cache deletion completed: ${deletedItems} items, ${deletedMappings} job mappings`);
+
       return {
-        message: 'Cache deleted successfully',
+        message: `Cache deleted successfully: ${deletedItems} items, ${deletedMappings} job mappings`,
       };
     } catch (error) {
       this.logger.error('Error deleting cache:', error);
@@ -209,35 +256,51 @@ export class AppService {
     }
   }
 
-  removeJob(jobId: string): void {
-    this.activeJobs = this.activeJobs.filter(job => job.id !== jobId);
-    this.logger.log(`Job ${jobId} removed.`);
-  }
+
 
   cancelJob(jobId: string): boolean {
-    this.completeJob(jobId);
-    const job = this.activeJobs.find(job => job.id === jobId);
-    const process = this.ffmpegProcesses.get(jobId);
-  
-    const finalizeJobRemoval = () => {
-      if (job) {
-        this.jobQueue = this.jobQueue.filter(id => id !== jobId);
-        if (this.immediateRemoval === true || job.progress < 100) {
-          this.fileRemoval.cleanupReadyForRemovalJobs([job]);
-          this.activeJobs = this.activeJobs.filter(activeJob => activeJob.id !== jobId);
-          this.logger.log(`Job ${jobId} removed`);
-        }
-        else{
-          this.logger.log('Immediate removal is not allowed, cleanup service will take care in due time')
-        }
+    // Get job mapping to find the corresponding cache item
+    const mapping = this.jobMappingService.getJobMapping(jobId);
+
+    if (!mapping) {
+      this.logger.warn(`Job mapping not found for jobId: ${jobId}`);
+      return false;
+    }
+
+    // Get cache item
+    const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
+
+    if (!cacheItem) {
+      this.logger.warn(`Cache item not found for ${mapping.itemId}/${mapping.qualityHash}`);
+      return false;
+    }
+
+    // Find the FFmpeg process for this cache item
+    const processKey = `${mapping.itemId}_${mapping.qualityHash}`;
+    const process = this.ffmpegProcesses.get(processKey);
+
+    const finalizeJobCancellation = async () => {
+      // Mark job as cancelled instead of removing it
+      await this.jobMappingService.updateJobStatus(jobId, 'cancelled');
+
+      // Remove device from waiting list
+      await this.cacheService.removeWaitingDevice(mapping.itemId, mapping.qualityHash, mapping.deviceId);
+
+      // If no more devices are waiting and status is processing, mark as failed
+      const updatedCacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
+      if (updatedCacheItem && updatedCacheItem.waitingDevices.length === 0 && updatedCacheItem.status === 'processing') {
+        await this.cacheService.updateCacheItemStatus(
+          mapping.itemId,
+          mapping.qualityHash,
+          'failed',
+          { error: 'Cancelled by user' }
+        );
       }
-      this.activeJobs
-        .filter((nextjob) => nextjob.deviceId === job.deviceId && nextjob.status === 'pending downloads limit')
-        .forEach((job) => job.status = 'queued')
-      this.checkQueue();
+
+      this.logger.log(`Job ${jobId} cancelled successfully`);
     };
 
-    if (process) {
+    if (process && cacheItem.status === 'processing') {
       try {
         this.logger.log(`Attempting to kill process tree for PID ${process.pid}`);
         new Promise<void>((resolve, reject) => {
@@ -248,41 +311,30 @@ export class AppService {
             } else {
               this.logger.log(`Successfully killed process tree for PID ${process.pid}`);
               resolve();
-              finalizeJobRemoval()
+              finalizeJobCancellation();
             }
           });
         });
-      } catch (err) { 
+      } catch (err) {
         this.logger.error(`Error terminating process for job ${jobId}: ${err.message}`);
       }
-      this.ffmpegProcesses.delete(jobId);
+
+      this.ffmpegProcesses.delete(processKey);
+      this.videoDurations.delete(processKey);
+
+      // Remove processing job
+      const processingKey = `${mapping.itemId}_${mapping.qualityHash}`;
+      this.processingJobs.delete(processingKey);
+
       return true;
     } else {
-      finalizeJobRemoval();
+      finalizeJobCancellation();
       return true;
     }
   }
-  
-  completeJob(jobId: string):void{
-    const job = this.activeJobs.find((job) => job.id === jobId);
 
-    if (job) {
-      job.status = 'ready-for-removal';
-      job.timestamp = new Date()
-      this.logger.log(`Job ${jobId} marked as completed and ready for removal.`);
-    } else {
-      this.logger.warn(`Job ${jobId} not found. Cannot mark as completed.`);
-    }
-  }
 
-  cleanupJob(jobId: string): void {
-    const job = this.activeJobs.find((job) => job.id === jobId);
-    this.activeJobs = this.activeJobs.filter((job) => job.id !== jobId);
-    this.ffmpegProcesses.delete(jobId);
-    this.videoDurations.delete(jobId);
-  }
-
-  getTranscodedFilePath(jobId: string): string | null {
+  async getTranscodedFilePath(jobId: string): Promise<string | null> {
     // Get job mapping to find the corresponding cache item
     const mapping = this.jobMappingService.getJobMapping(jobId);
 
@@ -294,8 +346,13 @@ export class AppService {
     const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
 
     if (cacheItem?.status === 'completed') {
+      // Mark job as downloaded
+      await this.jobMappingService.updateJobStatus(jobId, 'downloaded');
+
       // Update last accessed time when file is downloaded
-      this.cacheService.updateLastAccessed(mapping.itemId, mapping.qualityHash);
+      await this.cacheService.updateLastAccessed(mapping.itemId, mapping.qualityHash);
+
+      this.logger.log(`Job ${jobId} marked as downloaded for ${mapping.itemId}/${mapping.qualityHash}`);
       return cacheItem.filePath;
     }
 
@@ -307,11 +364,20 @@ export class AppService {
   }
 
   async getStatistics() {
-    const cacheSize = await this.getCacheSize();
-    const totalTranscodes = this.getTotalTranscodes();
-    const activeJobs = this.getActiveJobs();
-    const completedJobs = this.getCompletedJobs();
-    const uniqueDevices = this.getUniqueDevices();
+    // Get new cache system statistics
+    const cacheStats = this.cacheService.getCacheStats();
+    const jobMappingStats = this.jobMappingService.getStats();
+
+    // Calculate cache size from new system
+    const cacheSize = this.formatSize(cacheStats.totalSize);
+
+    // Use new cache system data
+    const totalTranscodes = cacheStats.completedJobs + cacheStats.failedJobs;
+    const activeJobs = cacheStats.activeProcessingJobs;
+    const completedJobs = cacheStats.completedJobs;
+
+    // Get unique devices from job mappings
+    const uniqueDevices = Object.keys(jobMappingStats.byDevice).length;
 
     return {
       cacheSize,
@@ -319,17 +385,48 @@ export class AppService {
       activeJobs,
       completedJobs,
       uniqueDevices,
+      // Additional new system stats
+      cacheStats: {
+        totalItems: cacheStats.totalItems,
+        totalQualities: cacheStats.totalQualities,
+        itemsReadyForCleanup: cacheStats.itemsReadyForCleanup,
+        oldestItem: cacheStats.oldestItem,
+        newestItem: cacheStats.newestItem,
+      },
+      jobMappingStats: {
+        totalMappings: jobMappingStats.total,
+        deviceBreakdown: jobMappingStats.byDevice,
+        oldestMapping: jobMappingStats.oldestMapping,
+      },
     };
   }
 
   async manuallyStartJob(jobId: string): Promise<boolean> {
-    const job = this.activeJobs.find((job) => job.id === jobId);
+    // Get job mapping to find the corresponding cache item
+    const mapping = this.jobMappingService.getJobMapping(jobId);
 
-    if (!job || job.status !== 'queued') {
+    if (!mapping) {
+      this.logger.warn(`Job mapping not found for jobId: ${jobId}`);
       return false;
     }
 
-    this.startJob(jobId);
+    // Get cache item
+    const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
+
+    if (!cacheItem) {
+      this.logger.warn(`Cache item not found for ${mapping.itemId}/${mapping.qualityHash}`);
+      return false;
+    }
+
+    // Check if already processing or completed
+    if (cacheItem.status !== 'processing') {
+      this.logger.warn(`Cache item ${mapping.itemId}/${mapping.qualityHash} is not in processing state: ${cacheItem.status}`);
+      return false;
+    }
+
+    // For new cache system, jobs start automatically, so manual start is not needed
+    // But we can return true if the job is already processing
+    this.logger.log(`Job ${jobId} is already processing (cache-based system)`);
     return true;
   }
 
@@ -360,17 +457,7 @@ export class AppService {
     return `${size.toFixed(2)} ${units[unitIndex]}`;
   }
 
-  private getTotalTranscodes(): number {
-    return this.activeJobs.length;
-  }
 
-  private getActiveJobs(): number {
-    return this.activeJobs.filter((job) => job.status === 'optimizing').length;
-  }
-
-  private getCompletedJobs(): number {
-    return this.activeJobs.filter((job) => job.status === 'ready-for-removal').length;
-  }
 
   private isDeviceIdInOptimizeHistory(job:Job){
     const uniqueDeviceIds: string[] = [...new Set(this.optimizationHistory.map((job: Job) => job.deviceId))];
@@ -400,10 +487,7 @@ export class AppService {
     this.logger.log(`${this.optimizationHistory.length} deviceIDs have recently finished a job`)
   }
 
-  private getUniqueDevices(): number {
-    const devices = new Set(this.activeJobs.map((job) => job.deviceId));
-    return devices.size;
-  }
+
 
   private checkQueue() {
     let runningJobs = this.activeJobs.filter((job) => job.status === 'optimizing').length;

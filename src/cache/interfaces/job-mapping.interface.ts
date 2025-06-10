@@ -5,6 +5,8 @@ export interface JobMapping {
   deviceId: string;
   createdAt: Date;
   lastAccessed: Date;
+  status: 'active' | 'downloaded' | 'cancelled';
+  downloadedAt?: Date;
 }
 
 export interface ProcessingJob {

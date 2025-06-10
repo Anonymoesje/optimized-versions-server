@@ -87,6 +87,12 @@ export class CleanupService {
         this.logger.log(`Cleaned up ${orphanedMappings} orphaned job mappings`);
       }
 
+      // Cleanup old downloaded/cancelled job mappings (older than 24 hours)
+      const oldJobMappings = await this.cleanupOldJobMappings();
+      if (oldJobMappings > 0) {
+        this.logger.log(`Cleaned up ${oldJobMappings} old job mappings`);
+      }
+
       // Get cache statistics after cleanup
       const statsAfter = this.cacheService.getCacheStats();
       this.logger.log(
@@ -104,6 +110,37 @@ export class CleanupService {
     } catch (error) {
       this.logger.error(`Error during cleanup process: ${error.message}`);
     }
+  }
+
+  /**
+   * Cleanup old downloaded/cancelled job mappings
+   */
+  private async cleanupOldJobMappings(): Promise<number> {
+    const now = new Date();
+    const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+    let cleanedCount = 0;
+
+    const allMappings = this.jobMappingService.getAllJobMappings();
+
+    for (const mapping of allMappings) {
+      // Clean up downloaded jobs older than 24 hours
+      if (mapping.status === 'downloaded' && mapping.downloadedAt) {
+        if (now.getTime() - mapping.downloadedAt.getTime() > maxAge) {
+          await this.jobMappingService.removeJobMapping(mapping.jobId);
+          cleanedCount++;
+        }
+      }
+
+      // Clean up cancelled jobs older than 24 hours
+      if (mapping.status === 'cancelled') {
+        if (now.getTime() - mapping.lastAccessed.getTime() > maxAge) {
+          await this.jobMappingService.removeJobMapping(mapping.jobId);
+          cleanedCount++;
+        }
+      }
+    }
+
+    return cleanedCount;
   }
 
   /**

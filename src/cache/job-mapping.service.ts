@@ -27,11 +27,12 @@ export class JobMappingService {
       deviceId,
       createdAt: new Date(),
       lastAccessed: new Date(),
+      status: 'active',
     };
 
     this.jobMappings.set(jobId, mapping);
     await this.saveJobMappingToDisk(mapping);
-    
+
     this.logger.debug(`Created job mapping: ${jobId} -> ${itemId}/${qualityHash}`);
   }
 
@@ -126,6 +127,28 @@ export class JobMappingService {
   }
 
   /**
+   * Update job mapping status
+   */
+  async updateJobStatus(jobId: string, status: JobMapping['status']): Promise<boolean> {
+    const mapping = this.jobMappings.get(jobId);
+
+    if (mapping) {
+      mapping.status = status;
+      mapping.lastAccessed = new Date();
+
+      if (status === 'downloaded') {
+        mapping.downloadedAt = new Date();
+      }
+
+      await this.saveJobMappingToDisk(mapping);
+      this.logger.debug(`Updated job ${jobId} status to ${status}`);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Get all job mappings
    */
   getAllJobMappings(): JobMapping[] {
@@ -181,11 +204,19 @@ export class JobMappingService {
           const filePath = path.join(this.jobsDir, file);
           const content = await fsPromises.readFile(filePath, 'utf-8');
           const mapping: JobMapping = JSON.parse(content);
-          
+
           // Convert date strings back to Date objects
           mapping.createdAt = new Date(mapping.createdAt);
           mapping.lastAccessed = new Date(mapping.lastAccessed);
-          
+          if (mapping.downloadedAt) {
+            mapping.downloadedAt = new Date(mapping.downloadedAt);
+          }
+
+          // Set default status for old mappings
+          if (!mapping.status) {
+            mapping.status = 'active';
+          }
+
           this.jobMappings.set(mapping.jobId, mapping);
         } catch (error) {
           this.logger.error(`Error loading job mapping from ${file}: ${error.message}`);
