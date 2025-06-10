@@ -2,7 +2,7 @@ services:
   app:
     image: ghcr.io/martijnvanonz/optimized-versions-server:latest
     ports:
-      - '3000:3000'
+      - '3001:3000'
     env_file:
       - .env
     environment:

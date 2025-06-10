@@ -268,7 +268,7 @@ export class CacheService {
   /**
    * Remove processing lock file
    */
-  private async removeProcessingLock(itemId: string, qualityHash: string): Promise<void> {
+  async removeProcessingLock(itemId: string, qualityHash: string): Promise<void> {
     try {
       const lockPath = this.getProcessingLockPath(itemId, qualityHash);
       if (fs.existsSync(lockPath)) {

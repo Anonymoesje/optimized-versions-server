@@ -245,7 +245,7 @@ export class AppService {
 
 
 
-  cancelJob(jobId: string): boolean {
+  async cancelJob(jobId: string): Promise<boolean> {
     // Get job mapping to find the corresponding cache item
     const mapping = this.jobMappingService.getJobMapping(jobId);
 
@@ -273,7 +273,7 @@ export class AppService {
       // Remove device from waiting list
       await this.cacheService.removeWaitingDevice(mapping.itemId, mapping.qualityHash, mapping.deviceId);
 
-      // If no more devices are waiting and status is processing, mark as failed
+      // If no more devices are waiting and status is processing, mark as failed and remove processing lock
       const updatedCacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
       if (updatedCacheItem && updatedCacheItem.waitingDevices.length === 0 && updatedCacheItem.status === 'processing') {
         await this.cacheService.updateCacheItemStatus(
@@ -282,6 +282,9 @@ export class AppService {
           'failed',
           { error: 'Cancelled by user' }
         );
+
+        // Remove processing lock
+        await this.cacheService.removeProcessingLock(mapping.itemId, mapping.qualityHash);
       }
 
       this.logger.log(`Job ${jobId} cancelled successfully`);
@@ -290,7 +293,9 @@ export class AppService {
     if (process && cacheItem.status === 'processing') {
       try {
         this.logger.log(`Attempting to kill process tree for PID ${process.pid}`);
-        new Promise<void>((resolve, reject) => {
+
+        // Kill the process and wait for completion
+        await new Promise<void>((resolve, reject) => {
           kill(process.pid, 'SIGINT', (err) => {
             if (err) {
               this.logger.error(`Failed to kill process tree for PID ${process.pid}: ${err.message}`);
@@ -298,24 +303,36 @@ export class AppService {
             } else {
               this.logger.log(`Successfully killed process tree for PID ${process.pid}`);
               resolve();
-              finalizeJobCancellation();
             }
           });
         });
+
+        // Clean up after successful kill
+        this.ffmpegProcesses.delete(processKey);
+        this.videoDurations.delete(processKey);
+
+        // Remove processing job
+        const processingKey = `${mapping.itemId}_${mapping.qualityHash}`;
+        this.processingJobs.delete(processingKey);
+
+        // Finalize cancellation
+        await finalizeJobCancellation();
+
+        return true;
       } catch (err) {
         this.logger.error(`Error terminating process for job ${jobId}: ${err.message}`);
+
+        // Even if kill failed, still try to clean up
+        this.ffmpegProcesses.delete(processKey);
+        this.videoDurations.delete(processKey);
+        this.processingJobs.delete(processKey);
+
+        await finalizeJobCancellation();
+        return false;
       }
-
-      this.ffmpegProcesses.delete(processKey);
-      this.videoDurations.delete(processKey);
-
-      // Remove processing job
-      const processingKey = `${mapping.itemId}_${mapping.qualityHash}`;
-      this.processingJobs.delete(processingKey);
-
-      return true;
     } else {
-      finalizeJobCancellation();
+      // No active process, just finalize cancellation
+      await finalizeJobCancellation();
       return true;
     }
   }

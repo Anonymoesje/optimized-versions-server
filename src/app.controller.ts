@@ -93,8 +93,7 @@ export class AppController {
   @Delete('cancel-job/:id')
   async cancelJob(@Param('id') id: string) {
     this.logger.log(`Cancellation request for job: ${id}`);
-    // this.appService.completeJob(id);
-    const result = this.appService.cancelJob(id);
+    const result = await this.appService.cancelJob(id);
     if (result) {
       return { message: 'Job cancelled successfully' };
     } else {
