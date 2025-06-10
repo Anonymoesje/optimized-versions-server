@@ -7,12 +7,24 @@ import { JellyfinAuthService } from './jellyfin-auth.service';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CleanupService } from './cleanup/cleanup.service';
 import { FileRemoval } from './cleanup/removalUtils';
+import { CacheService } from './cache/cache.service';
+import { QualityService } from './cache/quality.service';
+import { JobMappingService } from './cache/job-mapping.service';
 
 
 @Module({
   imports: [ScheduleModule.forRoot(), ConfigModule.forRoot({ isGlobal: true })],
   controllers: [AppController],
-  providers: [AppService, Logger, JellyfinAuthService, CleanupService, FileRemoval],
+  providers: [
+    AppService,
+    Logger,
+    JellyfinAuthService,
+    FileRemoval,
+    CacheService,
+    QualityService,
+    JobMappingService,
+    CleanupService, // CleanupService after its dependencies
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

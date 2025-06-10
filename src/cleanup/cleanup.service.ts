@@ -7,108 +7,118 @@ import { CACHE_DIR } from '../constants';
 import { FileRemoval } from './removalUtils';
 import { ConfigService } from '@nestjs/config';
 import { Job } from '../app.service';
+import { CacheService } from '../cache/cache.service';
+import { JobMappingService } from '../cache/job-mapping.service';
 
 @Injectable()
 export class CleanupService {
   private readonly logger = new Logger(CleanupService.name);
   private readonly cacheDir: string;
-  private readonly removalDelayMs: number;
+  private readonly retentionMs: number;
 
   constructor(
     private readonly appService: AppService,
     private readonly fileRemoval: FileRemoval,
     private readonly configService: ConfigService,
+    private readonly cacheService: CacheService,
+    private readonly jobMappingService: JobMappingService,
   ) {
     this.cacheDir = CACHE_DIR;
 
-    const removalDelayHours = this.configService.get<number>(
-      'TIME_TO_KEEP_FILES',
-      8, // default to 8 hours
+    // Use new 48-hour retention policy
+    const retentionHours = this.configService.get<number>(
+      'CACHE_RETENTION_HOURS',
+      48, // default to 48 hours
     );
-    this.removalDelayMs = removalDelayHours * 60 * 60 * 1000; // Convert hours to milliseconds
+    this.retentionMs = retentionHours * 60 * 60 * 1000; // Convert hours to milliseconds
   }
 
   @Cron(CronExpression.EVERY_HOUR)
   async handleCleanup(): Promise<void> {
-    const jobs = this.appService.getAllJobs();
-    const outputPaths = new Set(jobs.map((job) => job.outputPath));
+    this.logger.log('Starting cache cleanup process...');
 
-    if (outputPaths.size === 0) {
-      this.logger.log('No files to clean up, skipping cleanup job.');
-      return;
-    }
-
-    this.logger.log(`Running cleanup job on ${outputPaths.size} files...`);
-    this.logger.debug(`Output paths: ${[...outputPaths].join(', ')}`);
-
-    const now = Date.now();
+    const now = new Date();
+    const cutoffTime = now.getTime() - this.retentionMs;
 
     try {
-      const files = await fsPromises.readdir(this.cacheDir);
-      this.logger.log(`Found ${files.length} files in cache directory: ${this.cacheDir}`);
-
-      // Filter files not associated with any active job
-      const filesToRemove = files.filter((file) => {
-        const filePath = path.join(this.cacheDir, file);
-        return !outputPaths.has(filePath);
-      });
-
-      if (filesToRemove.length > 0) {
-        this.logger.log(`Removing ${filesToRemove.length} unassociated files...`);
-
-        // Remove files concurrently
-        await Promise.all(
-          filesToRemove.map(async (file) => {
-            const filePath = path.join(this.cacheDir, file);
-            this.logger.log(`Removing ${filePath}, no associated jobs`);
-            try {
-              await this.fileRemoval.removeFile(filePath);
-              this.logger.log(`Successfully removed file: ${filePath}`);
-            } catch (error) {
-              this.logger.error(`Failed to remove file ${filePath}: ${error.message}`);
-            }
-          }),
-        );
-      } else {
-        this.logger.log('No unassociated files found for removal.');
-      }
-
-      const jobsToCleanup = jobs.filter(
-        (job) =>
-          this.isOlderThanDelay(job.timestamp, now) && job.status === 'ready-for-removal',
+      // Get cache statistics before cleanup
+      const statsBefore = this.cacheService.getCacheStats();
+      this.logger.log(
+        `Cache stats before cleanup: ${statsBefore.totalItems} items, ` +
+        `${statsBefore.totalQualities} qualities, ` +
+        `${this.formatSize(statsBefore.totalSize)} total size`
       );
 
-      if (jobsToCleanup.length > 0) {
-        this.logger.log(`Cleaning up ${jobsToCleanup.length} jobs...`);
+      // Get items older than retention period (based on last accessed time)
+      const itemsToCleanup = this.cacheService.getItemsOlderThan(cutoffTime);
 
-        await Promise.all(
-          jobsToCleanup.map(async (job) => {
-            this.logger.log(`Cleaning up job ${job.id} (timestamp: ${job.timestamp})`);
-            try {
-              await this.fileRemoval.cleanupReadyForRemovalJobs([job]);
-              this.appService.removeJob(job.id);
-              this.logger.log(`Successfully cleaned up job ${job.id}`);
-            } catch (error) {
-              this.logger.error(`Failed to clean up job ${job.id}: ${error.message}`);
-            }
-          }),
+      if (itemsToCleanup.length > 0) {
+        this.logger.log(
+          `Found ${itemsToCleanup.length} cache items older than ${this.retentionMs / (60 * 60 * 1000)} hours`
         );
+
+        // Remove old cache items
+        let removedCount = 0;
+        for (const item of itemsToCleanup) {
+          try {
+            const success = await this.cacheService.removeItem(item.itemId, item.qualityHash);
+            if (success) {
+              removedCount++;
+              this.logger.debug(
+                `Removed cache item: ${item.itemId}/${item.qualityHash} ` +
+                `(last accessed: ${item.lastAccessed.toISOString()})`
+              );
+            }
+          } catch (error) {
+            this.logger.error(
+              `Failed to remove cache item ${item.itemId}/${item.qualityHash}: ${error.message}`
+            );
+          }
+        }
+
+        this.logger.log(`Successfully removed ${removedCount} cache items`);
       } else {
-        this.logger.log('No jobs eligible for cleanup at this time.');
+        this.logger.log('No cache items eligible for cleanup');
       }
+
+      // Cleanup orphaned job mappings
+      const orphanedMappings = await this.jobMappingService.cleanupOrphanedMappings();
+      if (orphanedMappings > 0) {
+        this.logger.log(`Cleaned up ${orphanedMappings} orphaned job mappings`);
+      }
+
+      // Get cache statistics after cleanup
+      const statsAfter = this.cacheService.getCacheStats();
+      this.logger.log(
+        `Cache stats after cleanup: ${statsAfter.totalItems} items, ` +
+        `${statsAfter.totalQualities} qualities, ` +
+        `${this.formatSize(statsAfter.totalSize)} total size`
+      );
+
+      // Log space saved
+      const spaceSaved = statsBefore.totalSize - statsAfter.totalSize;
+      if (spaceSaved > 0) {
+        this.logger.log(`Cleanup freed up ${this.formatSize(spaceSaved)} of disk space`);
+      }
+
     } catch (error) {
       this.logger.error(`Error during cleanup process: ${error.message}`);
     }
   }
 
   /**
-   * Determines if the given timestamp is older than the configured delay.
-   * @param timestamp The timestamp to compare.
-   * @param now The current time in milliseconds.
-   * @returns True if the timestamp is older than the delay, else false.
+   * Format file size in human readable format
    */
-  private isOlderThanDelay(timestamp: Date, now: number): boolean {
-    const timestampMs = timestamp.getTime();
-    return now - timestampMs > this.removalDelayMs;
+  private formatSize(bytes: number): string {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+
+    return `${size.toFixed(2)} ${units[unitIndex]}`;
   }
 }

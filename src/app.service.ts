@@ -12,6 +12,11 @@ import { promises as fsPromises } from 'fs';
 import { CACHE_DIR } from './constants';
 import { FileRemoval } from './cleanup/removalUtils';
 import * as kill from 'tree-kill';
+import { CacheService } from './cache/cache.service';
+import { QualityService } from './cache/quality.service';
+import { JobMappingService } from './cache/job-mapping.service';
+import { CacheItem } from './cache/interfaces/cache-item.interface';
+import { ProcessingJob } from './cache/interfaces/job-mapping.interface';
 
 export interface Job {
   id: string;
@@ -29,11 +34,16 @@ export interface Job {
 
 @Injectable()
 export class AppService {
+  // Legacy job system (for backward compatibility during transition)
   private activeJobs: Job[] = [];
   private optimizationHistory: Job[] = [];
   private ffmpegProcesses: Map<string, ChildProcess> = new Map();
   private videoDurations: Map<string, number> = new Map();
   private jobQueue: string[] = [];
+
+  // New cache-based system
+  private processingJobs: Map<string, ProcessingJob> = new Map(); // itemId_qualityHash -> ProcessingJob
+
   private maxConcurrentJobs: number;
   private maxCachedPerUser: number;
   private cacheDir: string;
@@ -42,8 +52,10 @@ export class AppService {
   constructor(
     private logger: Logger,
     private configService: ConfigService,
-    private readonly fileRemoval: FileRemoval
-
+    private readonly fileRemoval: FileRemoval,
+    private readonly cacheService: CacheService,
+    private readonly qualityService: QualityService,
+    private readonly jobMappingService: JobMappingService,
   ) {
     this.cacheDir = CACHE_DIR;
     this.maxConcurrentJobs = this.configService.get<number>(
@@ -68,35 +80,97 @@ export class AppService {
     itemId: string,
     item: any,
   ): Promise<string> {
-    const jobId = uuidv4();
-    const outputPath = path.join(this.cacheDir, `combined_${jobId}.mp4`);
+    // Extract quality information from URL
+    const qualityInfo = this.qualityService.extractQualityFromUrl(url);
+    const qualityHash = this.qualityService.generateQualityHash(qualityInfo);
+    const qualityDescription = this.qualityService.getQualityDescription(qualityInfo);
 
     this.logger.log(
-      `Queueing job ${jobId.padEnd(36)} | URL: ${(url.slice(0, 50) + '...').padEnd(53)} | Path: ${outputPath}`,
+      `Optimize request for item ${itemId} | Quality: ${qualityDescription} (${qualityHash}) | Device: ${deviceId}`
     );
 
-    this.activeJobs.push({
-      id: jobId,
+    // Check if this item+quality already exists in cache
+    const existingCacheItem = this.cacheService.getCacheItem(itemId, qualityHash);
+
+    if (existingCacheItem?.status === 'completed') {
+      // Reuse existing completed item
+      const jobId = uuidv4();
+      await this.jobMappingService.createJobMapping(jobId, itemId, qualityHash, deviceId);
+      await this.cacheService.updateLastAccessed(itemId, qualityHash);
+
+      this.logger.log(
+        `Reusing existing cache for ${itemId}/${qualityHash} -> job ${jobId}`
+      );
+      return jobId;
+    }
+
+    if (existingCacheItem?.status === 'processing') {
+      // Add to waiting list for existing job
+      const jobId = uuidv4();
+      await this.jobMappingService.createJobMapping(jobId, itemId, qualityHash, deviceId);
+      await this.cacheService.addWaitingDevice(itemId, qualityHash, deviceId);
+
+      this.logger.log(
+        `Added to waiting list for ${itemId}/${qualityHash} -> job ${jobId}`
+      );
+      return jobId;
+    }
+
+    // Start new optimization
+    const jobId = uuidv4();
+    const cacheItem = await this.cacheService.createCacheItem(
+      itemId,
+      qualityHash,
+      qualityInfo,
+      url,
+      item
+    );
+
+    await this.jobMappingService.createJobMapping(jobId, itemId, qualityHash, deviceId);
+
+    // Create processing job
+    const processingJob: ProcessingJob = {
+      jobId,
+      itemId,
+      qualityHash,
       status: 'queued',
       progress: 0,
-      outputPath,
-      inputUrl: url,
-      itemId,
-      item,
-      deviceId,
-      timestamp: new Date(),
-      size: 0,
-    });
+      deviceIds: [deviceId],
+      createdAt: new Date(),
+    };
 
-    this.jobQueue.push(jobId);
-    this.checkQueue(); // Check if we can start the job immediately
+    const processingKey = `${itemId}_${qualityHash}`;
+    this.processingJobs.set(processingKey, processingJob);
+
+    // Start the optimization process
+    this.startOptimizationJob(cacheItem, processingJob);
+
+    this.logger.log(
+      `Started new optimization for ${itemId}/${qualityHash} -> job ${jobId}`
+    );
 
     return jobId;
   }
 
   getJobStatus(jobId: string): Job | null {
-    const job = this.activeJobs.find((job) => job.id === jobId);
-    return job || null;
+    // Get job mapping to find the corresponding cache item
+    const mapping = this.jobMappingService.getJobMapping(jobId);
+
+    if (!mapping) {
+      this.logger.warn(`Job mapping not found for jobId: ${jobId}`);
+      return null;
+    }
+
+    // Get cache item
+    const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
+
+    if (!cacheItem) {
+      this.logger.warn(`Cache item not found for ${mapping.itemId}/${mapping.qualityHash}`);
+      return null;
+    }
+
+    // Convert cache item to Job format for backward compatibility
+    return this.convertCacheItemToJob(cacheItem, jobId, mapping.deviceId);
   }
 
   getAllJobs(deviceId?: string | null): Job[] {
@@ -195,10 +269,22 @@ export class AppService {
   }
 
   getTranscodedFilePath(jobId: string): string | null {
-    const job = this.activeJobs.find((job) => job.id === jobId);
-    if (job && job.status === 'completed') {
-      return job.outputPath;
+    // Get job mapping to find the corresponding cache item
+    const mapping = this.jobMappingService.getJobMapping(jobId);
+
+    if (!mapping) {
+      return null;
     }
+
+    // Get cache item
+    const cacheItem = this.cacheService.getCacheItem(mapping.itemId, mapping.qualityHash);
+
+    if (cacheItem?.status === 'completed') {
+      // Update last accessed time when file is downloaded
+      this.cacheService.updateLastAccessed(mapping.itemId, mapping.qualityHash);
+      return cacheItem.filePath;
+    }
+
     return null;
   }
 
@@ -507,6 +593,261 @@ export class AppService {
             job.speed = Math.max(speed, 0);
           }
         }
+      }
+    }
+  }
+
+  /**
+   * Convert cache item to Job format for backward compatibility
+   */
+  private convertCacheItemToJob(cacheItem: CacheItem, jobId: string, deviceId: string): Job {
+    return {
+      id: jobId,
+      status: this.mapCacheStatusToJobStatus(cacheItem.status),
+      progress: cacheItem.progress,
+      outputPath: cacheItem.filePath,
+      inputUrl: cacheItem.originalUrl,
+      deviceId: deviceId,
+      itemId: cacheItem.itemId,
+      timestamp: cacheItem.createdAt,
+      size: cacheItem.size,
+      item: cacheItem.metadata,
+      speed: cacheItem.speed,
+    };
+  }
+
+  /**
+   * Map cache item status to job status for backward compatibility
+   */
+  private mapCacheStatusToJobStatus(cacheStatus: CacheItem['status']): Job['status'] {
+    switch (cacheStatus) {
+      case 'processing':
+        return 'optimizing';
+      case 'completed':
+        return 'completed';
+      case 'failed':
+        return 'failed';
+      default:
+        return 'queued';
+    }
+  }
+
+  /**
+   * Start optimization job for cache item
+   */
+  private async startOptimizationJob(cacheItem: CacheItem, processingJob: ProcessingJob): Promise<void> {
+    try {
+      processingJob.status = 'processing';
+      processingJob.startedAt = new Date();
+
+      await this.cacheService.updateCacheItemStatus(
+        cacheItem.itemId,
+        cacheItem.qualityHash,
+        'processing'
+      );
+
+      const ffmpegArgs = this.getFfmpegArgs(cacheItem.originalUrl, cacheItem.filePath);
+
+      // Ensure directory exists
+      const dir = path.dirname(cacheItem.filePath);
+      await fsPromises.mkdir(dir, { recursive: true });
+
+      await this.startFFmpegProcessForCache(cacheItem, processingJob, ffmpegArgs);
+
+    } catch (error) {
+      this.logger.error(`Error starting optimization job for ${cacheItem.itemId}/${cacheItem.qualityHash}: ${error.message}`);
+
+      processingJob.status = 'failed';
+      processingJob.error = error.message;
+
+      await this.cacheService.updateCacheItemStatus(
+        cacheItem.itemId,
+        cacheItem.qualityHash,
+        'failed',
+        { error: error.message }
+      );
+    }
+  }
+
+  /**
+   * Start FFmpeg process for cache item
+   */
+  private async startFFmpegProcessForCache(
+    cacheItem: CacheItem,
+    processingJob: ProcessingJob,
+    ffmpegArgs: string[],
+  ): Promise<void> {
+    try {
+      // Get video duration first
+      await this.getVideoDurationForCache(cacheItem.originalUrl, cacheItem.itemId, cacheItem.qualityHash);
+
+      return new Promise((resolve, reject) => {
+        const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+        const processKey = `${cacheItem.itemId}_${cacheItem.qualityHash}`;
+        this.ffmpegProcesses.set(processKey, ffmpegProcess);
+
+        ffmpegProcess.stderr.on('data', (data) => {
+          this.updateProgressForCache(cacheItem, processingJob, data.toString());
+        });
+
+        ffmpegProcess.on('close', async (code) => {
+          this.ffmpegProcesses.delete(processKey);
+          this.videoDurations.delete(processKey);
+
+          if (code === 0) {
+            // Success
+            processingJob.status = 'completed';
+            processingJob.completedAt = new Date();
+
+            await this.cacheService.updateCacheItemStatus(
+              cacheItem.itemId,
+              cacheItem.qualityHash,
+              'completed',
+              { progress: 100 }
+            );
+
+            this.logger.log(
+              `Optimization completed for ${cacheItem.itemId}/${cacheItem.qualityHash}`
+            );
+            resolve();
+          } else {
+            // Failed
+            const errorMsg = `FFmpeg process failed with exit code ${code}`;
+            processingJob.status = 'failed';
+            processingJob.error = errorMsg;
+
+            await this.cacheService.updateCacheItemStatus(
+              cacheItem.itemId,
+              cacheItem.qualityHash,
+              'failed',
+              { error: errorMsg }
+            );
+
+            this.logger.error(
+              `Optimization failed for ${cacheItem.itemId}/${cacheItem.qualityHash}: ${errorMsg}`
+            );
+            reject(new Error(errorMsg));
+          }
+
+          // Clean up processing job
+          const processingKey = `${cacheItem.itemId}_${cacheItem.qualityHash}`;
+          this.processingJobs.delete(processingKey);
+        });
+
+        ffmpegProcess.on('error', async (error) => {
+          this.logger.error(
+            `FFmpeg process error for ${cacheItem.itemId}/${cacheItem.qualityHash}: ${error.message}`
+          );
+
+          processingJob.status = 'failed';
+          processingJob.error = error.message;
+
+          await this.cacheService.updateCacheItemStatus(
+            cacheItem.itemId,
+            cacheItem.qualityHash,
+            'failed',
+            { error: error.message }
+          );
+
+          reject(error);
+        });
+      });
+    } catch (error) {
+      this.logger.error(`Error processing ${cacheItem.itemId}/${cacheItem.qualityHash}: ${error.message}`);
+
+      processingJob.status = 'failed';
+      processingJob.error = error.message;
+
+      await this.cacheService.updateCacheItemStatus(
+        cacheItem.itemId,
+        cacheItem.qualityHash,
+        'failed',
+        { error: error.message }
+      );
+
+      throw error;
+    }
+  }
+
+  /**
+   * Get video duration for cache item
+   */
+  private async getVideoDurationForCache(
+    inputUrl: string,
+    itemId: string,
+    qualityHash: string,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ffprobe = spawn('ffprobe', [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-of',
+        'default=noprint_wrappers=1:nokey=1',
+        inputUrl,
+      ]);
+
+      let output = '';
+
+      ffprobe.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      ffprobe.on('close', (code) => {
+        if (code === 0) {
+          const duration = parseFloat(output.trim());
+          const key = `${itemId}_${qualityHash}`;
+          this.videoDurations.set(key, duration);
+          resolve();
+        } else {
+          reject(new Error(`ffprobe process exited with code ${code}`));
+        }
+      });
+    });
+  }
+
+  /**
+   * Update progress for cache item
+   */
+  private async updateProgressForCache(
+    cacheItem: CacheItem,
+    processingJob: ProcessingJob,
+    ffmpegOutput: string,
+  ): Promise<void> {
+    const progressMatch = ffmpegOutput.match(
+      /time=(\d{2}):(\d{2}):(\d{2})\.\d{2}/,
+    );
+    const speedMatch = ffmpegOutput.match(/speed=(\d+\.?\d*)x/);
+
+    if (progressMatch) {
+      const [, hours, minutes, seconds] = progressMatch;
+      const currentTime =
+        parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
+
+      const durationKey = `${cacheItem.itemId}_${cacheItem.qualityHash}`;
+      const totalDuration = this.videoDurations.get(durationKey);
+
+      if (totalDuration) {
+        const progress = Math.min((currentTime / totalDuration) * 100, 99.9);
+        processingJob.progress = Math.max(progress, 0);
+
+        // Update speed if available
+        if (speedMatch) {
+          const speed = parseFloat(speedMatch[1]);
+          processingJob.speed = Math.max(speed, 0);
+        }
+
+        // Update cache item progress
+        await this.cacheService.updateCacheItemStatus(
+          cacheItem.itemId,
+          cacheItem.qualityHash,
+          'processing',
+          {
+            progress: processingJob.progress,
+            speed: processingJob.speed
+          }
+        );
       }
     }
   }
