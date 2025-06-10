@@ -54,6 +54,9 @@ export class AppService {
       'MAX_CONCURRENT_JOBS',
       1,
     );
+
+    // Perform startup cleanup
+    this.performStartupCleanup();
   }
 
   async downloadAndCombine(
@@ -719,6 +722,43 @@ export class AppService {
           );
         }
       }
+    }
+  }
+
+  /**
+   * Perform startup cleanup to handle interrupted jobs
+   */
+  private async performStartupCleanup(): Promise<void> {
+    try {
+      this.logger.log('Performing startup cleanup...');
+
+      // Clear any in-memory processing jobs (they're invalid after restart)
+      this.processingJobs.clear();
+      this.ffmpegProcesses.clear();
+      this.videoDurations.clear();
+
+      // Get statistics before cleanup
+      const statsBefore = this.cacheService.getCacheStats();
+      const interruptedJobs = statsBefore.activeProcessingJobs;
+
+      if (interruptedJobs > 0) {
+        this.logger.log(`Found ${interruptedJobs} interrupted jobs from previous session`);
+
+        // Cache service already cleaned up interrupted jobs in its constructor
+        // Job mappings for interrupted jobs will be handled by cleanup service
+
+        // Get statistics after cleanup
+        const statsAfter = this.cacheService.getCacheStats();
+        const cleanedJobs = interruptedJobs - statsAfter.activeProcessingJobs;
+
+        if (cleanedJobs > 0) {
+          this.logger.log(`Cleaned up ${cleanedJobs} interrupted jobs`);
+        }
+      }
+
+      this.logger.log('Startup cleanup completed');
+    } catch (error) {
+      this.logger.error(`Error during startup cleanup: ${error.message}`);
     }
   }
 }

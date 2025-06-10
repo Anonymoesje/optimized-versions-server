@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { promises as fsPromises } from 'fs';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -11,11 +12,14 @@ export class CacheService {
   private readonly logger = new Logger(CacheService.name);
   private cacheItems: Map<string, CacheItem> = new Map();
   private itemsDir: string;
+  private readonly cancelInterruptedJobs: boolean;
 
-  constructor() {
+  constructor(private readonly configService: ConfigService) {
     this.itemsDir = path.join(CACHE_DIR, 'items');
+    this.cancelInterruptedJobs = this.configService.get<boolean>('CANCEL_INTERRUPTED_JOBS', true);
     this.ensureDirectoryStructure();
     this.loadExistingCacheItems();
+    this.cleanupInterruptedJobs();
   }
 
   /**
@@ -404,6 +408,53 @@ export class CacheService {
       }
     } catch (error) {
       this.logger.error(`Error cleaning up directories for ${itemId}/${qualityHash}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Cleanup interrupted jobs on startup
+   */
+  private async cleanupInterruptedJobs(): Promise<void> {
+    if (!this.cancelInterruptedJobs) {
+      this.logger.log('Skipping interrupted job cleanup (CANCEL_INTERRUPTED_JOBS=false)');
+      return;
+    }
+
+    try {
+      let cleanedCount = 0;
+
+      for (const cacheItem of this.cacheItems.values()) {
+        // Check if item was processing when server stopped
+        if (cacheItem.status === 'processing') {
+          // Check if processing lock file exists
+          const lockPath = this.getProcessingLockPath(cacheItem.itemId, cacheItem.qualityHash);
+
+          if (fs.existsSync(lockPath)) {
+            // Mark as failed since process was interrupted
+            cacheItem.status = 'failed';
+            cacheItem.error = 'Server restart interrupted processing';
+
+            // Remove processing lock
+            await this.removeProcessingLock(cacheItem.itemId, cacheItem.qualityHash);
+
+            // Save updated status
+            await this.saveCacheItemToDisk(cacheItem);
+
+            cleanedCount++;
+            this.logger.warn(
+              `Marked interrupted job as failed: ${cacheItem.itemId}/${cacheItem.qualityHash}`
+            );
+          }
+        }
+      }
+
+      if (cleanedCount > 0) {
+        this.logger.log(`Cleaned up ${cleanedCount} interrupted jobs on startup`);
+      } else {
+        this.logger.log('No interrupted jobs found during startup');
+      }
+    } catch (error) {
+      this.logger.error(`Error during startup cleanup: ${error.message}`);
     }
   }
 
