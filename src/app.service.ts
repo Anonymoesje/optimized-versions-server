@@ -425,6 +425,115 @@ export class AppService {
     };
   }
 
+  async getDashboardStats() {
+    const cacheStats = this.cacheService.getCacheStats();
+    const jobMappingStats = this.jobMappingService.getStats();
+
+    // Get current jobs for dashboard
+    const currentJobs = this.getAllJobs().map(job => ({
+      id: job.id,
+      title: this.getJobTitle(job),
+      status: job.status,
+      statusText: this.getStatusText(job.status),
+      progress: Math.round(job.progress || 0),
+      speed: job.speed ? `${job.speed.toFixed(1)}` : '0.0',
+    }));
+
+    // Calculate uptime
+    const uptimeMs = process.uptime() * 1000;
+    const uptime = this.formatUptime(uptimeMs);
+
+    // Get queue length
+    const queueLength = Array.from(this.processingJobs.values()).filter(
+      job => job.status === 'queued'
+    ).length;
+
+    return {
+      system: {
+        uptime,
+        activeJobs: cacheStats.activeProcessingJobs,
+        queueLength,
+        maxConcurrent: this.maxConcurrentJobs,
+      },
+      cache: {
+        totalItems: cacheStats.totalItems,
+        totalSize: this.formatSize(cacheStats.totalSize),
+        oldestItem: cacheStats.oldestItem ? this.formatTimeAgo(cacheStats.oldestItem) : 'None',
+        readyForCleanup: cacheStats.itemsReadyForCleanup,
+      },
+      stats: {
+        totalTranscodes: cacheStats.completedJobs + cacheStats.failedJobs,
+        completedJobs: cacheStats.completedJobs,
+        failedJobs: cacheStats.failedJobs,
+        uniqueDevices: Object.keys(jobMappingStats.byDevice).length,
+      },
+      cleanup: {
+        retentionHours: 48, // From config
+        lastCleanup: 'Unknown', // TODO: Track last cleanup time
+        nextCleanup: 'Next hour', // TODO: Calculate next cleanup
+        itemsCleanedToday: 0, // TODO: Track daily cleanup count
+      },
+      jobs: currentJobs,
+    };
+  }
+
+  private getJobTitle(job: Job): string {
+    // Try to extract meaningful title from item metadata
+    if (job.item?.Name) {
+      return job.item.Name;
+    }
+    if (job.item?.SeriesName && job.item?.IndexNumber) {
+      return `${job.item.SeriesName} S${job.item.ParentIndexNumber || 1}E${job.item.IndexNumber}`;
+    }
+    return `Item ${job.itemId.substring(0, 8)}...`;
+  }
+
+  private getStatusText(status: string): string {
+    const statusMap = {
+      'queued': 'Queued',
+      'optimizing': 'Optimizing',
+      'completed': 'Completed',
+      'failed': 'Failed',
+      'cancelled': 'Cancelled',
+      'pending downloads limit': 'Pending',
+      'ready-for-removal': 'Ready for Removal',
+    };
+    return statusMap[status] || status;
+  }
+
+  private formatUptime(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      return `${days}d ${hours % 24}h ${minutes % 60}m`;
+    } else if (hours > 0) {
+      return `${hours}h ${minutes % 60}m`;
+    } else {
+      return `${minutes}m ${seconds % 60}s`;
+    }
+  }
+
+  private formatTimeAgo(date: Date): string {
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMinutes / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffDays > 0) {
+      return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+    } else if (diffHours > 0) {
+      return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    } else if (diffMinutes > 0) {
+      return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`;
+    } else {
+      return 'Just now';
+    }
+  }
+
   async manuallyStartJob(jobId: string): Promise<boolean> {
     // Get job mapping to find the corresponding cache item
     const mapping = this.jobMappingService.getJobMapping(jobId);

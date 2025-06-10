@@ -39,6 +39,8 @@ export class AppModule implements NestModule {
         'start-job/:id',
         'all-jobs',
         'delete-cache',
+        'dashboard',
+        'dashboard/stats',
       );
   }
 }
