@@ -30,6 +30,18 @@ export class QualityService {
         videoBitDepth: params.get('VideoBitDepth') || undefined,
         audioSampleRate: params.get('AudioSampleRate') || undefined,
         subtitleCodec: params.get('SubtitleCodec') || undefined,
+
+        // Audio/Subtitle stream selection parameters (CRITICAL for proper caching)
+        audioStreamIndex: params.get('AudioStreamIndex') || undefined,
+        subtitleStreamIndex: params.get('SubtitleStreamIndex') || undefined,
+        audioLanguage: params.get('AudioLanguage') || undefined,
+        subtitleLanguage: params.get('SubtitleLanguage') || undefined,
+        maxAudioChannels: params.get('MaxAudioChannels') || undefined,
+        transcodingMaxAudioChannels: params.get('TranscodingMaxAudioChannels') || undefined,
+        subtitleMethod: params.get('SubtitleMethod') || undefined,
+        startTimeTicks: params.get('StartTimeTicks') || undefined,
+
+        // Session-specific (will be excluded from hash)
         mediaSourceId: params.get('MediaSourceId') || undefined,
         deviceId: params.get('DeviceId') || undefined,
         playSessionId: params.get('PlaySessionId') || undefined,
@@ -60,6 +72,7 @@ export class QualityService {
     
     sortedKeys.forEach(key => {
       // Skip session-specific parameters that don't affect quality
+      // BUT INCLUDE audio/subtitle stream selection parameters for proper caching
       if (!['deviceId', 'playSessionId', 'mediaSourceId'].includes(key)) {
         sortedQuality[key] = qualityInfo[key];
       }
@@ -98,9 +111,28 @@ export class QualityService {
       parts.push(qualityInfo.videoCodec.toUpperCase());
     }
 
-    // Audio codec
+    // Audio codec and language
     if (qualityInfo.audioCodec) {
-      parts.push(qualityInfo.audioCodec.toUpperCase());
+      let audioPart = qualityInfo.audioCodec.toUpperCase();
+      if (qualityInfo.audioLanguage) {
+        audioPart += ` (${qualityInfo.audioLanguage})`;
+      }
+      if (qualityInfo.audioStreamIndex) {
+        audioPart += ` [Track ${qualityInfo.audioStreamIndex}]`;
+      }
+      parts.push(audioPart);
+    }
+
+    // Subtitle info
+    if (qualityInfo.subtitleStreamIndex || qualityInfo.subtitleLanguage) {
+      let subPart = 'Subs';
+      if (qualityInfo.subtitleLanguage) {
+        subPart += ` (${qualityInfo.subtitleLanguage})`;
+      }
+      if (qualityInfo.subtitleStreamIndex) {
+        subPart += ` [Track ${qualityInfo.subtitleStreamIndex}]`;
+      }
+      parts.push(subPart);
     }
 
     return parts.length > 0 ? parts.join(' ') : 'Unknown Quality';
