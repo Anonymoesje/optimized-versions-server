@@ -134,6 +134,10 @@ export class AppService {
       // Mark as processing immediately to prevent race conditions
       processingJob.status = 'processing';
 
+      this.logger.debug(`[DEBUG] Starting job immediately: ${itemId}/${qualityHash}`);
+      this.logger.debug(`  - Processing Job Status: ${processingJob.status}`);
+      this.logger.debug(`  - Cache Item Status: ${cacheItem.status}`);
+
       // Start the optimization process immediately
       this.startOptimizationJob(cacheItem, processingJob).catch(error => {
         this.logger.error(`Failed to start optimization job: ${error.message}`);
@@ -141,6 +145,10 @@ export class AppService {
     } else {
       // Job will remain in 'pending' status until a slot becomes available
       this.logger.log(`Job queued due to max concurrent limit: ${itemId}/${qualityHash}`);
+
+      this.logger.debug(`[DEBUG] Job queued: ${itemId}/${qualityHash}`);
+      this.logger.debug(`  - Processing Job Status: ${processingJob.status}`);
+      this.logger.debug(`  - Cache Item Status: ${cacheItem.status}`);
     }
 
     this.logger.log(
@@ -167,8 +175,21 @@ export class AppService {
       return null;
     }
 
+    // DEBUG: Check processing job status vs cache item status
+    const processingKey = `${mapping.itemId}_${mapping.qualityHash}`;
+    const processingJob = this.processingJobs.get(processingKey);
+
+    this.logger.debug(`[DEBUG] Job Status Check for ${jobId}:`);
+    this.logger.debug(`  - Cache Item Status: ${cacheItem.status}`);
+    this.logger.debug(`  - Processing Job Status: ${processingJob?.status || 'NOT_FOUND'}`);
+    this.logger.debug(`  - Job Mapping Status: ${mapping.status}`);
+
     // Convert cache item to Job format for backward compatibility
-    return this.convertCacheItemToJob(cacheItem, jobId, mapping.deviceId);
+    const job = this.convertCacheItemToJob(cacheItem, jobId, mapping.deviceId);
+
+    this.logger.debug(`  - Final Job Status: ${job.status}`);
+
+    return job;
   }
 
   getAllJobs(deviceId?: string | null): Job[] {
@@ -512,18 +533,28 @@ export class AppService {
    * Map cache item status to job status for backward compatibility
    */
   private mapCacheStatusToJobStatus(cacheStatus: CacheItem['status']): Job['status'] {
+    let mappedStatus: Job['status'];
+
     switch (cacheStatus) {
       case 'pending':
-        return 'queued';
+        mappedStatus = 'queued';
+        break;
       case 'processing':
-        return 'optimizing';
+        mappedStatus = 'optimizing';
+        break;
       case 'completed':
-        return 'completed';
+        mappedStatus = 'completed';
+        break;
       case 'failed':
-        return 'failed';
+        mappedStatus = 'failed';
+        break;
       default:
-        return 'queued';
+        mappedStatus = 'queued';
+        break;
     }
+
+    this.logger.debug(`[DEBUG] Status Mapping: '${cacheStatus}' → '${mappedStatus}'`);
+    return mappedStatus;
   }
 
   /**
