@@ -134,10 +134,6 @@ export class AppService {
       // Mark as processing immediately to prevent race conditions
       processingJob.status = 'processing';
 
-      this.logger.debug(`[DEBUG] Starting job immediately: ${itemId}/${qualityHash}`);
-      this.logger.debug(`  - Processing Job Status: ${processingJob.status}`);
-      this.logger.debug(`  - Cache Item Status: ${cacheItem.status}`);
-
       // Start the optimization process immediately
       this.startOptimizationJob(cacheItem, processingJob).catch(error => {
         this.logger.error(`Failed to start optimization job: ${error.message}`);
@@ -146,10 +142,6 @@ export class AppService {
       // Job will remain in 'pending' status until a slot becomes available
       // Keep processing job status as 'queued' and cache item status as 'pending'
       this.logger.log(`Job queued due to max concurrent limit: ${itemId}/${qualityHash}`);
-
-      this.logger.debug(`[DEBUG] Job queued: ${itemId}/${qualityHash}`);
-      this.logger.debug(`  - Processing Job Status: ${processingJob.status}`);
-      this.logger.debug(`  - Cache Item Status: ${cacheItem.status}`);
     }
 
     this.logger.log(
@@ -176,14 +168,9 @@ export class AppService {
       return null;
     }
 
-    // DEBUG: Check processing job status vs cache item status
+    // Check processing job status vs cache item status
     const processingKey = `${mapping.itemId}_${mapping.qualityHash}`;
     const processingJob = this.processingJobs.get(processingKey);
-
-    this.logger.debug(`[DEBUG] Job Status Check for ${jobId}:`);
-    this.logger.debug(`  - Cache Item Status: ${cacheItem.status}`);
-    this.logger.debug(`  - Processing Job Status: ${processingJob?.status || 'NOT_FOUND'}`);
-    this.logger.debug(`  - Job Mapping Status: ${mapping.status}`);
 
     // Convert cache item to Job format for backward compatibility
     let job = this.convertCacheItemToJob(cacheItem, jobId, mapping.deviceId);
@@ -191,10 +178,7 @@ export class AppService {
     // Override job status with processing job status if it's queued
     if (processingJob && processingJob.status === 'queued') {
       job.status = 'queued';
-      this.logger.debug(`  - Overriding job status to 'queued' from processing job`);
     }
-
-    this.logger.debug(`  - Final Job Status: ${job.status}`);
 
     return job;
   }
@@ -540,28 +524,18 @@ export class AppService {
    * Map cache item status to job status for backward compatibility
    */
   private mapCacheStatusToJobStatus(cacheStatus: CacheItem['status']): Job['status'] {
-    let mappedStatus: Job['status'];
-
     switch (cacheStatus) {
       case 'pending':
-        mappedStatus = 'queued';
-        break;
+        return 'queued';
       case 'processing':
-        mappedStatus = 'optimizing';
-        break;
+        return 'optimizing';
       case 'completed':
-        mappedStatus = 'completed';
-        break;
+        return 'completed';
       case 'failed':
-        mappedStatus = 'failed';
-        break;
+        return 'failed';
       default:
-        mappedStatus = 'queued';
-        break;
+        return 'queued';
     }
-
-    this.logger.debug(`[DEBUG] Status Mapping: '${cacheStatus}' → '${mappedStatus}'`);
-    return mappedStatus;
   }
 
   /**
