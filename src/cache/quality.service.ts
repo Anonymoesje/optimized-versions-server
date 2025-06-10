@@ -11,17 +11,8 @@ export class QualityService {
    */
   extractQualityFromUrl(url: string): QualityInfo {
     try {
-      this.logger.debug(`[DIAGNOSTIC] Full URL: ${url}`);
-
       const urlObj = new URL(url);
       const params = urlObj.searchParams;
-
-      // Log all URL parameters for diagnosis
-      const allParams = {};
-      params.forEach((value, key) => {
-        allParams[key] = value;
-      });
-      this.logger.debug(`[DIAGNOSTIC] All URL parameters: ${JSON.stringify(allParams, null, 2)}`);
 
       const qualityInfo: QualityInfo = {
         // Video quality parameters (try both PascalCase and camelCase)
@@ -64,14 +55,6 @@ export class QualityService {
         playSessionId: params.get('PlaySessionId') || undefined,
       };
 
-      // Log specific audio/subtitle parameters before cleanup
-      this.logger.debug(`[DIAGNOSTIC] Audio/Subtitle params found:`);
-      this.logger.debug(`  - audioStreamIndex: ${qualityInfo.audioStreamIndex || 'NOT FOUND'}`);
-      this.logger.debug(`  - subtitleStreamIndex: ${qualityInfo.subtitleStreamIndex || 'NOT FOUND'}`);
-      this.logger.debug(`  - subtitleMethod: ${qualityInfo.subtitleMethod || 'NOT FOUND'}`);
-      this.logger.debug(`  - startTimeTicks: ${qualityInfo.startTimeTicks || 'NOT FOUND'}`);
-      this.logger.debug(`  - container: ${qualityInfo.container || 'NOT FOUND'}`);
-
       // Remove undefined values to keep hash consistent
       Object.keys(qualityInfo).forEach(key => {
         if (qualityInfo[key] === undefined) {
@@ -79,7 +62,6 @@ export class QualityService {
         }
       });
 
-      this.logger.debug(`[DIAGNOSTIC] Final quality info after cleanup: ${JSON.stringify(qualityInfo)}`);
       this.logger.debug(`Extracted quality info: ${JSON.stringify(qualityInfo)}`);
       return qualityInfo;
     } catch (error) {
@@ -105,9 +87,6 @@ export class QualityService {
     });
 
     const qualityString = JSON.stringify(sortedQuality);
-
-    this.logger.debug(`[DIAGNOSTIC] Quality data used for hash: ${qualityString}`);
-    this.logger.debug(`[DIAGNOSTIC] Sorted quality keys: ${Object.keys(sortedQuality).join(', ')}`);
 
     const hash = createHash('md5')
       .update(qualityString)

@@ -496,6 +496,11 @@ export class AppService {
       const now = new Date();
       const timeUntilExpiry = expiryTime.getTime() - now.getTime();
 
+      // Extract audio/subtitle details for display
+      const audioTrack = cacheItem.qualityInfo?.audioStreamIndex ? `Audio Track ${cacheItem.qualityInfo.audioStreamIndex}` : null;
+      const subtitleTrack = cacheItem.qualityInfo?.subtitleStreamIndex ? `Subtitle Track ${cacheItem.qualityInfo.subtitleStreamIndex}` : null;
+      const subtitleMethod = cacheItem.qualityInfo?.subtitleMethod || null;
+
       return {
         id: cacheItem.itemId,
         title,
@@ -512,6 +517,10 @@ export class AppService {
         expiresIn: timeUntilExpiry > 0 ? this.formatTimeUntil(timeUntilExpiry) : 'Expired',
         isExpired: timeUntilExpiry <= 0,
         error: cacheItem.error,
+        // Audio/Subtitle details
+        audioTrack,
+        subtitleTrack,
+        subtitleMethod,
       };
     });
 
@@ -574,16 +583,37 @@ export class AppService {
     // Build quality string from available info
     const parts = [];
 
-    if (qualityInfo.resolution) {
-      parts.push(qualityInfo.resolution);
+    // Video quality
+    if (qualityInfo.maxWidth && qualityInfo.maxHeight) {
+      parts.push(`${qualityInfo.maxWidth}x${qualityInfo.maxHeight}`);
     }
 
     if (qualityInfo.videoCodec) {
       parts.push(qualityInfo.videoCodec.toUpperCase());
     }
 
+    // Audio info with track number
     if (qualityInfo.audioCodec) {
-      parts.push(qualityInfo.audioCodec.toUpperCase());
+      let audioPart = qualityInfo.audioCodec.toUpperCase();
+      if (qualityInfo.audioStreamIndex) {
+        audioPart += ` [Audio ${qualityInfo.audioStreamIndex}]`;
+      }
+      parts.push(audioPart);
+    }
+
+    // Subtitle info with track number
+    if (qualityInfo.subtitleStreamIndex) {
+      let subPart = 'Subs';
+      if (qualityInfo.subtitleMethod) {
+        subPart += ` (${qualityInfo.subtitleMethod})`;
+      }
+      subPart += ` [Track ${qualityInfo.subtitleStreamIndex}]`;
+      parts.push(subPart);
+    }
+
+    // Container info
+    if (qualityInfo.container) {
+      parts.push(qualityInfo.container.toUpperCase());
     }
 
     return parts.length > 0 ? parts.join(' • ') : 'Unknown Quality';

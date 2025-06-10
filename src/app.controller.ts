@@ -163,11 +163,21 @@ export class AppController {
             color: #666;
         }
 
-        .cache-type, .cache-quality, .cache-time, .cache-expiry {
+        .cache-type, .cache-quality, .cache-time, .cache-expiry, .cache-audio, .cache-subtitle {
             background: #e9ecef;
             padding: 2px 8px;
             border-radius: 12px;
             font-size: 0.8rem;
+        }
+
+        .cache-audio {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .cache-subtitle {
+            background: #d4edda;
+            color: #155724;
         }
 
         .cache-expiry.expired {
@@ -410,6 +420,8 @@ export class AppController {
                                         <div class="cache-meta">
                                             <span class="cache-type">\${item.type}</span>
                                             <span class="cache-quality">\${item.quality}</span>
+                                            \${item.audioTrack ? \`<span class="cache-audio">🎵 \${item.audioTrack}</span>\` : ''}
+                                            \${item.subtitleTrack ? \`<span class="cache-subtitle">💬 \${item.subtitleTrack}\${item.subtitleMethod ? \` (\${item.subtitleMethod})\` : ''}</span>\` : ''}
                                             <span class="cache-time">\${item.timeAgo}</span>
                                             <span class="cache-expiry \${item.isExpired ? 'expired' : (item.expiresIn.includes('hour') && parseInt(item.expiresIn) < 6) ? 'warning' : ''}">
                                                 \${item.isExpired ? '⚠️ Expired' : \`🕒 Expires in \${item.expiresIn}\`}
