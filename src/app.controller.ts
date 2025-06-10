@@ -126,6 +126,11 @@ export class AppController {
             grid-column: 1 / -1;
         }
 
+        .cache-card {
+            grid-column: 1 / -1;
+            margin-top: 20px;
+        }
+
         .job-item, .cache-item {
             background: #f8f9fa;
             border-radius: 8px;
@@ -158,11 +163,21 @@ export class AppController {
             color: #666;
         }
 
-        .cache-type, .cache-quality, .cache-time {
+        .cache-type, .cache-quality, .cache-time, .cache-expiry {
             background: #e9ecef;
             padding: 2px 8px;
             border-radius: 12px;
             font-size: 0.8rem;
+        }
+
+        .cache-expiry.expired {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .cache-expiry.warning {
+            background: #fff3cd;
+            color: #856404;
         }
 
         .cache-status-section {
@@ -383,7 +398,7 @@ export class AppController {
                     }
                 </div>
 
-                <div class="card jobs-card">
+                <div class="card cache-card">
                     <h3>🎬 Cached Shows & Movies</h3>
                     \${data.cachedItems.length === 0 ?
                         '<p style="text-align: center; color: #666; padding: 20px;">No cached items</p>' :
@@ -396,6 +411,9 @@ export class AppController {
                                             <span class="cache-type">\${item.type}</span>
                                             <span class="cache-quality">\${item.quality}</span>
                                             <span class="cache-time">\${item.timeAgo}</span>
+                                            <span class="cache-expiry \${item.isExpired ? 'expired' : (item.expiresIn.includes('hour') && parseInt(item.expiresIn) < 6) ? 'warning' : ''}">
+                                                \${item.isExpired ? '⚠️ Expired' : \`🕒 Expires in \${item.expiresIn}\`}
+                                            </span>
                                         </div>
                                     </div>
                                     <div class="cache-status-section">

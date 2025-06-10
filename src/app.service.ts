@@ -490,6 +490,12 @@ export class AppService {
       const type = this.getCacheItemType(cacheItem);
       const quality = this.getCacheItemQuality(cacheItem);
 
+      // Calculate expiry time (48 hours from last accessed)
+      const retentionMs = 48 * 60 * 60 * 1000; // 48 hours
+      const expiryTime = new Date(cacheItem.lastAccessed.getTime() + retentionMs);
+      const now = new Date();
+      const timeUntilExpiry = expiryTime.getTime() - now.getTime();
+
       return {
         id: cacheItem.itemId,
         title,
@@ -502,6 +508,9 @@ export class AppService {
         createdAt: cacheItem.createdAt,
         lastAccessed: cacheItem.lastAccessed,
         timeAgo: this.formatTimeAgo(cacheItem.lastAccessed),
+        expiresAt: expiryTime,
+        expiresIn: timeUntilExpiry > 0 ? this.formatTimeUntil(timeUntilExpiry) : 'Expired',
+        isExpired: timeUntilExpiry <= 0,
         error: cacheItem.error,
       };
     });
@@ -634,6 +643,22 @@ export class AppService {
       return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`;
     } else {
       return 'Just now';
+    }
+  }
+
+  private formatTimeUntil(ms: number): string {
+    const minutes = Math.floor(ms / (1000 * 60));
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      return `${days} day${days > 1 ? 's' : ''}`;
+    } else if (hours > 0) {
+      return `${hours} hour${hours > 1 ? 's' : ''}`;
+    } else if (minutes > 0) {
+      return `${minutes} minute${minutes > 1 ? 's' : ''}`;
+    } else {
+      return 'Less than 1 minute';
     }
   }
 
