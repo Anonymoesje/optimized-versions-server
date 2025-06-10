@@ -47,7 +47,7 @@ export class CacheService {
       itemId,
       qualityHash,
       qualityInfo,
-      status: 'processing',
+      status: 'pending', // Start with pending, will be updated to processing when job actually starts
       filePath,
       createdAt: new Date(),
       lastAccessed: new Date(),
