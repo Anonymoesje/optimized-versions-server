@@ -129,10 +129,16 @@ export class AppService {
     const processingKey = `${itemId}_${qualityHash}`;
     this.processingJobs.set(processingKey, processingJob);
 
-    // Start the optimization process (don't await to return jobId immediately)
-    this.startOptimizationJob(cacheItem, processingJob).catch(error => {
-      this.logger.error(`Failed to start optimization job: ${error.message}`);
-    });
+    // Check if we can start immediately or need to queue
+    if (this.canStartNewJob()) {
+      // Start the optimization process immediately
+      this.startOptimizationJob(cacheItem, processingJob).catch(error => {
+        this.logger.error(`Failed to start optimization job: ${error.message}`);
+      });
+    } else {
+      // Job will remain in 'pending' status until a slot becomes available
+      this.logger.log(`Job queued due to max concurrent limit: ${itemId}/${qualityHash}`);
+    }
 
     this.logger.log(
       `Started new optimization for ${itemId}/${qualityHash} -> job ${jobId}`
@@ -316,6 +322,9 @@ export class AppService {
 
         // Finalize cancellation
         await finalizeJobCancellation();
+
+        // Check if we can start any queued jobs
+        this.checkAndStartQueuedJobs();
 
         return true;
       } catch (err) {
@@ -515,6 +524,46 @@ export class AppService {
   }
 
   /**
+   * Check if we can start a new job based on concurrent limits
+   */
+  private canStartNewJob(): boolean {
+    const activeJobs = Array.from(this.processingJobs.values()).filter(
+      job => job.status === 'processing'
+    ).length;
+
+    return activeJobs < this.maxConcurrentJobs;
+  }
+
+  /**
+   * Check for queued jobs and start them if slots are available
+   */
+  private checkAndStartQueuedJobs(): void {
+    if (!this.canStartNewJob()) {
+      return;
+    }
+
+    // Find pending jobs that can be started
+    const pendingJobs = Array.from(this.processingJobs.entries()).filter(
+      ([, job]) => job.status === 'queued'
+    );
+
+    for (const [, processingJob] of pendingJobs) {
+      if (!this.canStartNewJob()) {
+        break;
+      }
+
+      const cacheItem = this.cacheService.getCacheItem(processingJob.itemId, processingJob.qualityHash);
+      if (cacheItem && cacheItem.status === 'pending') {
+        this.logger.log(`Starting queued job: ${processingJob.itemId}/${processingJob.qualityHash}`);
+
+        this.startOptimizationJob(cacheItem, processingJob).catch(error => {
+          this.logger.error(`Failed to start queued optimization job: ${error.message}`);
+        });
+      }
+    }
+  }
+
+  /**
    * Start optimization job for cache item
    */
   private async startOptimizationJob(cacheItem: CacheItem, processingJob: ProcessingJob): Promise<void> {
@@ -616,6 +665,9 @@ export class AppService {
           // Clean up processing job
           const processingKey = `${cacheItem.itemId}_${cacheItem.qualityHash}`;
           this.processingJobs.delete(processingKey);
+
+          // Check if we can start any queued jobs
+          this.checkAndStartQueuedJobs();
         });
 
         ffmpegProcess.on('error', async (error) => {
