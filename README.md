@@ -71,7 +71,7 @@ CANCEL_INTERRUPTED_JOBS=false         # Default: false - Auto-resume interrupted
 
 ### 1. Optimize
 
-A POST request is made to the server with the HLS stream URL. The server will then start a job, downloading the HLS stream to the server, and convert it to a single file. 
+A POST request is made to the server with the HLS stream URL. The server will then start a job using the GPU, downloading the HLS stream to the server, and convert it to a single file. 
 
 In the meantime, the app will poll the server for the progress of the optimize. 
 
