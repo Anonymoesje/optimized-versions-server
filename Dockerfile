@@ -1,34 +1,31 @@
-# syntax=docker/dockerfile:1.4
+# Stage 1: Build the application
+FROM node:22-bookworm AS builder
 
-# -------- Builder Stage --------
-FROM node:20-slim AS builder
-WORKDIR /app
+# Install build dependencies
+RUN apt-get update && apt-get install -y ffmpeg
+
+WORKDIR /usr/src/app
 
 COPY package*.json ./
 RUN npm ci
-
 COPY . .
 RUN npm run build
 
-# -------- Runtime Stage with CUDA 12.9 + Node + FFmpeg --------
-FROM nvidia/cuda:12.9.0-runtime-ubuntu22.04
+# Stage 2: Production image with GPU-enabled FFmpeg
+FROM node:22-bookworm
 
-# Install Node.js, npm, and ffmpeg
+# Install ffmpeg with nvenc support
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    nodejs \
-    npm \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /usr/src/app
 
-# Copy built app and dependencies
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
+RUN npm ci --only=production
 
-# Expose app port (adjust if needed)
+COPY --from=builder /usr/src/app/dist ./dist
+
 EXPOSE 3000
 
 CMD ["node", "dist/main.js"]
