@@ -1,5 +1,5 @@
 # Optimized Versions Server
-> A Streamyfin companion server for better downloads with intelligent caching
+> A Streamyfin companion server with GPU support for better downloads with intelligent caching
 
 ## About
 
