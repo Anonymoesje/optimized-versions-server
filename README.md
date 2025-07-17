@@ -6,6 +6,7 @@
 Optimized Versions Server is a transcoding and caching server that acts as a middleman between Jellyfin and the Streamyfin app. It combines HLS streams into single video files and intelligently caches them to eliminate duplicate downloads across devices.
 
 **Key Features:**
+- ⏲ **GPU Transcoding**: Utilize your GPU for even faster transcoding
 - 🚀 **Smart Caching**: Same content + quality = single cached file shared across devices
 - ⏱️ **48-hour Retention**: Files stay available for 48 hours after last access
 - 🔄 **Zero Duplication**: No more downloading the same movie twice on different devices
