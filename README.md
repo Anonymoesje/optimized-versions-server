@@ -28,7 +28,7 @@ Note: The server works best if it's on the same server as the Jellyfin server.
 ```yaml
 services:
   app:
-    image: ghcr.io/martijnvanonz/optimized-versions-server:latest
+    image: ghcr.io/anonymoesje/optimized-versions-server:latest
     ports:
       - '3000:3000'
     env_file:
@@ -39,6 +39,13 @@ services:
     restart: unless-stopped
     volumes:
       - ./cache:/usr/src/app/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 ```
 
 Create a .env file following the example below or by copying the .env.example file from this repository.
