@@ -1,18 +1,25 @@
 services:
   app:
-    image: ghcr.io/martijnvanonz/optimized-versions-server:latest
+    image: ghcr.io/anonymoesje/optimized-versions-server:master
     ports:
-      - '3001:3000'
+      - '3000:3000'
     env_file:
       - .env
     environment:
+      # Change to your own timezone
+      - TZ=Europe/Amsterdam
       - NODE_ENV=production
-      # New cache configuration
-      - CACHE_RETENTION_HOURS=48
-      - CLEANUP_INTERVAL_MINUTES=60
+      - MAX_CONCURRENT_JOBS=8
     restart: unless-stopped
+
+    # Nvidia GPU support:
+    runtime: nvidia
+    # Optionally expose the /dev/nvidia devices (sometimes needed)
+    devices:
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+
+    # If you want to use a local volume for the cache, uncomment the following lines:
     volumes:
-      # Cache volume for persistent storage
       - ./cache:/usr/src/app/cache
-      # Optional: logs volume
-      - ./logs:/usr/src/app/logs
